@@ -8,11 +8,13 @@
 
 ---
 
-## 在另一台电脑克隆（推送完成后）
+## 在另一台电脑克隆
+
+**私有库（已推送）：** https://github.com/18926119195/diergbanben-fanout
 
 ```bash
-git clone <你的 GitHub 仓库 URL>
-cd diergbanben-fanout   # 或你创建的仓库名
+git clone https://github.com/18926119195/diergbanben-fanout.git
+cd diergbanben-fanout
 
 cd docuverse
 cp .env.example .env.local   # 填入 Key，勿提交
