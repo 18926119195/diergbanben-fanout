@@ -6,7 +6,6 @@
 
 import {
   executeCompose,
-  executeInfer,
   executeInferOps,
   executeRetrieve,
   executeReuse,
@@ -37,17 +36,21 @@ import type { ActionRecord, FanoutPath } from './types'
 import type {
   ForbidPatternEntry,
   HarnessContext,
+  MotionBrainInput,
   MotionPlan,
   WorkingSetState,
 } from './harnessTypes'
 import { buildMotionPlans } from './motionBrain'
-import { pathToMemoryEntry } from './harnessContext'
-import { blocksFromInferUnit } from './abCompareRunner'
+import { buildHarnessContext, pathToMemoryEntry } from './harnessContext'
+import { emptyWorkingSet } from './harnessTypes'
 import {
-  augmentQuestionWithMarkers,
-  compileHarnessProjection,
-  compilerBlocksToAbBlocks,
-} from './harnessCompiler'
+  allGatewayPlansApproved,
+  buildPendingGatewayPlans,
+  executeHarnessMotion,
+  type PendingGatewayPlan,
+} from './harnessGateway'
+import type { BookSemanticIndex } from './semanticIndex'
+import { inferWithMicroLoop } from './microLoop'
 
 function ringAngle(strandIndex: number, total: number): number {
   const n = Math.max(total, 1)
@@ -96,7 +99,18 @@ export interface FanoutRunOptions {
   includeFine?: boolean
   /** @deprecated use policy */
   includeWindow?: boolean
+  semanticIndex?: BookSemanticIndex | null
   onProgress?: (msg: string) => void
+  /** Required for executeLetterDesk / runFanout gateway path */
+  harnessExec?: {
+    ctx: HarnessContext
+    motionPlans: ReadonlyArray<MotionPlan>
+    approvedPlanIds: ReadonlySet<string>
+    pendingGateway: ReadonlyArray<PendingGatewayPlan>
+    workingSet: WorkingSetState
+    forbidPatterns: ForbidPatternEntry[]
+    archiveOnlyPathIds: ReadonlySet<string>
+  }
 }
 
 export interface FanoutDraftReport {
@@ -148,6 +162,7 @@ export function buildMotionPlansForDesk(input: {
   forbidPatterns: ForbidPatternEntry[]
   expandBudget: number
   draftKeys: string[]
+  archiveOnlyPathIds?: ReadonlySet<string>
 }): MotionPlan[] {
   const composeCandidates = input.units.map((u) => ({
     unitKey: u.candidate.R.key,
@@ -177,7 +192,13 @@ export function buildMotionPlansForDesk(input: {
 
   const currentMemory = input.acceptedPaths
     .filter((p) => p.direction.accepted === true)
+    .filter((p) => !(input.archiveOnlyPathIds?.has(p.pathId)))
     .map((p) => pathToMemoryEntry(p, 'settled', 'current'))
+
+  const archivePaths = input.acceptedPaths
+    .filter((p) => p.direction.accepted === true)
+    .filter((p) => input.archiveOnlyPathIds?.has(p.pathId))
+    .map((p) => pathToMemoryEntry(p, 'settled', 'archive'))
 
   return buildMotionPlans({
     question: input.question,
@@ -186,7 +207,7 @@ export function buildMotionPlansForDesk(input: {
     composeCandidates,
     workingSet: input.workingSet,
     currentMemory,
-    archivePaths: [],
+    archivePaths,
     reuseHits,
     expandBudget: input.expandBudget,
     maxKeysPerPlan: 8,
@@ -216,68 +237,164 @@ function resolvePlanForUnit(
   return hit ?? defaultExpandPlan(unit)
 }
 
+function buildBrainInputForUnit(input: {
+  question: string
+  docId: string
+  units: FanoutInferUnit[]
+  acceptedPaths: FanoutPath[]
+  inferredPaths: FanoutPath[]
+  workingSet: WorkingSetState
+  forbidPatterns: ForbidPatternEntry[]
+  expandBudget: number
+  draftKeys: string[]
+  archivePaths: FanoutPath[]
+}): MotionBrainInput {
+  const composeCandidates = input.units.map((u) => ({
+    unitKey: u.candidate.R.key,
+    kind: u.kind,
+    label: u.label,
+    memberKeys: unitMemberKeysOf(u),
+  }))
+  const reuseHits: Array<{ unitKey: string; pathId: string; score: number }> = []
+  for (const u of input.units) {
+    const hit = findReusableForCombo({
+      unit: u,
+      question: input.question,
+      accepted: input.acceptedPaths,
+      inferred: input.inferredPaths,
+      modelId: LOCKED_LLM.chatModel,
+    })
+    if (hit) {
+      reuseHits.push({
+        unitKey: u.candidate.R.key,
+        pathId: hit.path.pathId,
+        score: hit.tier === 'accepted' ? 0.9 : 0.75,
+      })
+    }
+  }
+  const currentMemory = input.acceptedPaths
+    .filter((p) => p.direction.accepted === true)
+    .map((p) => pathToMemoryEntry(p, 'settled', 'current'))
+  const archiveMemory = input.archivePaths.map((p) =>
+    pathToMemoryEntry(p, 'settled', 'archive'),
+  )
+  return {
+    question: input.question,
+    docId: input.docId,
+    draftKeys: input.draftKeys,
+    composeCandidates,
+    workingSet: input.workingSet,
+    currentMemory,
+    archivePaths: archiveMemory,
+    reuseHits,
+    expandBudget: input.expandBudget,
+    maxKeysPerPlan: 8,
+    forbidPatterns: input.forbidPatterns,
+  }
+}
+
 async function inferUnitViaHarness(input: {
   unit: FanoutInferUnit
+  units: FanoutInferUnit[]
   question: string
   bookIndex: BookIndex
   ctx: HarnessContext
   plan: MotionPlan
-}): Promise<Awaited<ReturnType<typeof executeInferOps>> | Awaited<ReturnType<typeof executeInfer>>> {
-  const memberKeys = unitMemberKeysOf(input.unit)
-  const compiled = compileHarnessProjection({
-    ctx: input.ctx,
-    bookIndex: input.bookIndex,
-    plan: input.plan,
-    memberKeys,
-  })
+  workingSet: WorkingSetState
+  brainInput: MotionBrainInput
+  approved: boolean
+}): Promise<{
+  result: Awaited<ReturnType<typeof executeInferOps>>
+  workingSet: WorkingSetState
+  gatewayActions: ActionRecord[]
+}> {
+  const needsGate =
+    input.plan.action === 'scopeRequest' ||
+    input.plan.action === 'faultIn' ||
+    (input.plan.action === 'expand' && input.plan.faultInKeys.length > 0)
 
-  let abBlocks = compilerBlocksToAbBlocks(compiled.blocks)
-  if (abBlocks.length === 0) {
-    abBlocks = blocksFromInferUnit(input.unit, input.bookIndex)
+  if (needsGate && !input.approved) {
+    const action: ActionRecord = {
+      actionId: `gate_skip_${Date.now().toString(36)}`,
+      actionKind: 'infer',
+      premiseKeys: unitMemberKeysOf(input.unit),
+      inputsRef: { question: input.question, role: 'gateway' },
+      outputsRef: { error: '双闸未批准', roleNote: 'gateway · awaiting approval' },
+      createdAt: Date.now(),
+    }
+    return {
+      result: {
+        action,
+        direction: null,
+        bundle: null,
+        ok: false,
+        error: '双闸未批准',
+        formalPath: null,
+      },
+      workingSet: input.workingSet,
+      gatewayActions: [],
+    }
   }
 
-  if (abBlocks.length === 0) {
-    return executeInfer({
-      candidate: input.unit.candidate,
+  if (
+    input.plan.action === 'collapse' ||
+    input.plan.action === 'scopeRequest' ||
+    input.plan.action === 'faultIn'
+  ) {
+    const motion = await executeHarnessMotion({
+      plan: input.plan,
+      ctx: input.ctx,
+      bookIndex: input.bookIndex,
+      unit: input.unit,
       question: input.question,
-      refluxPremise: compiled.refluxPremise[0]
-        ? {
-            conclusion: compiled.refluxPremise[0].conclusion,
-            pathSummary: compiled.refluxPremise[0].pathSummary,
-            fromKey: compiled.refluxPremise[0].fromKey,
-          }
-        : undefined,
-      preferCompactExcerpt: compiled.refluxPremise.length > 0,
+      workingSet: input.workingSet,
+      approved: input.approved,
     })
+    if (motion.skipped || !motion.inferResult) {
+      const err = motion.skipReason ?? 'motion 跳过'
+      const action: ActionRecord = {
+        actionId: `motion_skip_${Date.now().toString(36)}`,
+        actionKind: 'infer',
+        premiseKeys: unitMemberKeysOf(input.unit),
+        inputsRef: { question: input.question, role: 'gateway' },
+        outputsRef: { error: err },
+        createdAt: Date.now(),
+      }
+      return {
+        result: {
+          action,
+          direction: null,
+          bundle: null,
+          ok: false,
+          error: err,
+          formalPath: null,
+        },
+        workingSet: motion.workingSet,
+        gatewayActions: motion.actions,
+      }
+    }
+    return {
+      result: motion.inferResult,
+      workingSet: motion.workingSet,
+      gatewayActions: motion.actions,
+    }
   }
 
-  const augmentedQuestion = augmentQuestionWithMarkers({
+  const loop = await inferWithMicroLoop({
+    unit: input.unit,
     question: input.question,
-    pathMarkers: compiled.pathMarkers,
-    refluxPremise: compiled.refluxPremise,
+    bookIndex: input.bookIndex,
+    ctx: input.ctx,
+    initialPlan: input.plan,
+    brainInput: input.brainInput,
+    workingSet: input.workingSet,
   })
 
-  const opsResult = await executeInferOps({
-    question: augmentedQuestion,
-    blocks: abBlocks,
-    unitLabel: input.unit.label,
-    premiseKeys: memberKeys,
-  })
-
-  if (opsResult.ok) return opsResult
-
-  return executeInfer({
-    candidate: input.unit.candidate,
-    question: input.question,
-    refluxPremise: compiled.refluxPremise[0]
-      ? {
-          conclusion: compiled.refluxPremise[0].conclusion,
-          pathSummary: compiled.refluxPremise[0].pathSummary,
-          fromKey: compiled.refluxPremise[0].fromKey,
-        }
-      : undefined,
-    preferCompactExcerpt: compiled.refluxPremise.length > 0,
-  })
+  return {
+    result: loop.result,
+    workingSet: loop.workingSet,
+    gatewayActions: [],
+  }
 }
 
 function isNearFullPage(bbox: [number, number, number, number]): boolean {
@@ -414,8 +531,13 @@ export async function prepareLetterDesk(
   const expandBudget = options.expandBudget ?? 3
   const actions: ActionRecord[] = []
 
-  options.onProgress?.('草稿·检索候选 key*（非注入）…')
-  const retrieved = await executeRetrieve({ bookIndex, question: q, topK })
+  options.onProgress?.('草稿·节级→槽级检索 key*（非注入）…')
+  const retrieved = await executeRetrieve({
+    bookIndex,
+    question: q,
+    topK,
+    semanticIndex: options.semanticIndex ?? null,
+  })
   actions.push(retrieved.action)
 
   if (retrieved.candidates.length === 0) {
@@ -702,12 +824,17 @@ export async function executeLetterDesk(
   session: LetterDeskSession,
   options: {
     onProgress?: (msg: string) => void
-    harness?: {
+    harness: {
       ctx: HarnessContext
-      motionPlans?: ReadonlyArray<MotionPlan>
+      motionPlans: ReadonlyArray<MotionPlan>
+      approvedPlanIds: ReadonlySet<string>
+      pendingGateway: ReadonlyArray<PendingGatewayPlan>
+      workingSet: WorkingSetState
+      forbidPatterns: ForbidPatternEntry[]
+      archiveOnlyPathIds: ReadonlySet<string>
     }
-  } = {},
-): Promise<FanoutRunResult & { returnToDesk?: boolean }> {
+  },
+): Promise<FanoutRunResult & { returnToDesk?: boolean; workingSet?: WorkingSetState }> {
   const {
     question: q,
     bookIndex,
@@ -800,33 +927,68 @@ export async function executeLetterDesk(
     }
   }
 
-  const motionPlans = options.harness?.motionPlans ?? []
-  const harnessCtx = options.harness?.ctx
+  if (!allGatewayPlansApproved(options.harness.pendingGateway)) {
+    return {
+      ok: false,
+      error: '双闸：尚有 motion 计划未人批（scopeRequest / faultIn / partial expand）',
+      paths: [],
+      actions,
+      searchQuery: draftReport.searchQuery,
+      draftReport,
+      letterDesk: { ...session.snapshot, status: 'review' },
+      deferredArchive: rowsToDeferredArchive(q, rows),
+      returnToDesk: true,
+    }
+  }
+
+  const motionPlans = options.harness.motionPlans
+  const harnessCtx = options.harness.ctx
+  let execWorkingSet = options.harness.workingSet
+
+  const archiveOnlyPaths = acceptedPaths.filter((p) =>
+    options.harness.archiveOnlyPathIds.has(p.pathId),
+  )
+
+  const brainInput = buildBrainInputForUnit({
+    question: q,
+    docId: harnessCtx.docId,
+    units,
+    acceptedPaths,
+    inferredPaths,
+    workingSet: execWorkingSet,
+    forbidPatterns: options.harness.forbidPatterns,
+    expandBudget: session.snapshot.expandBudget,
+    draftKeys: draftReport.candidates.map((c) => c.key),
+    archivePaths: archiveOnlyPaths,
+  })
 
   const inferResults = await mapPool(
     toInfer,
     concurrency,
     async ({ unit, index }) => {
-      const result =
-        harnessCtx != null
-          ? await inferUnitViaHarness({
-              unit,
-              question: q,
-              bookIndex,
-              ctx: {
-                ...harnessCtx,
-                working: { ...harnessCtx.working, question: q },
-              },
-              plan: resolvePlanForUnit(unit, motionPlans),
-            })
-          : await executeInfer({
-              candidate: unit.candidate,
-              question: q,
-              refluxPremise,
-              preferCompactExcerpt: Boolean(refluxPremise),
-            })
+      const plan = resolvePlanForUnit(unit, motionPlans)
+      const needsGate = plan.action === 'scopeRequest' || plan.action === 'faultIn'
+      const approved =
+        !needsGate || options.harness.approvedPlanIds.has(plan.planId)
+
+      const out = await inferUnitViaHarness({
+        unit,
+        units,
+        question: q,
+        bookIndex,
+        ctx: {
+          ...harnessCtx,
+          working: { ...harnessCtx.working, question: q },
+        },
+        plan,
+        workingSet: execWorkingSet,
+        brainInput,
+        approved,
+      })
+      execWorkingSet = out.workingSet
       return {
-        result,
+        result: out.result,
+        gatewayActions: out.gatewayActions,
         index,
         unit,
         reusedFromPathId: undefined as string | undefined,
@@ -856,7 +1018,11 @@ export async function executeLetterDesk(
   const retrieveId = retrieveAction.actionId
   const composeId = composeAction.actionId
 
-  for (const { result, index, unit, reusedFromPathId } of merged) {
+  for (const item of merged) {
+    const { result, index, unit, reusedFromPathId } = item
+    const gatewayActions =
+      'gatewayActions' in item ? item.gatewayActions : undefined
+    if (gatewayActions?.length) actions.push(...gatewayActions)
     actions.push(result.action)
     if (!result.ok || !result.direction) continue
 
@@ -951,6 +1117,7 @@ export async function executeLetterDesk(
       status: 'done',
     },
     deferredArchive,
+    workingSet: execWorkingSet,
   }
 }
 
@@ -974,7 +1141,50 @@ export async function runFanout(
       draftReport: prepared.draftReport,
     }
   }
+
+  let harnessExec = options.harnessExec
+  if (!harnessExec) {
+    const plans = buildMotionPlansForDesk({
+      question: question.trim(),
+      docId: bookIndex.docId,
+      units: prepared.session.units,
+      acceptedPaths: options.acceptedPaths ?? [],
+      inferredPaths: options.inferredPaths ?? [],
+      workingSet: emptyWorkingSet(),
+      forbidPatterns: [],
+      expandBudget: options.expandBudget ?? 3,
+      draftKeys: prepared.session.draftReport.candidates.map((c) => c.key),
+      archiveOnlyPathIds: new Set<string>(),
+    })
+    const approved = new Set(plans.map((p) => p.planId))
+    const ctx = buildHarnessContext({
+      docId: bookIndex.docId,
+      sessionPaths: [],
+      acceptedPaths: options.acceptedPaths ?? [],
+      actionLog: prepared.actions,
+      acceptedActionLog: [],
+      question: question.trim(),
+      workingSet: emptyWorkingSet(),
+    })
+    const pending = buildPendingGatewayPlans(
+      plans,
+      ctx,
+      bookIndex,
+      approved,
+    ).map((p) => ({ ...p, status: 'approved' as const }))
+    harnessExec = {
+      ctx,
+      motionPlans: plans,
+      approvedPlanIds: approved,
+      pendingGateway: pending,
+      workingSet: emptyWorkingSet(),
+      forbidPatterns: [],
+      archiveOnlyPathIds: new Set<string>(),
+    }
+  }
+
   return executeLetterDesk(prepared.session, {
     onProgress: options.onProgress,
+    harness: harnessExec,
   })
 }

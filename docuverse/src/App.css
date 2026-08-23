@@ -2353,6 +2353,18 @@ body.emphasize-pen-on .workbench-root * {
   margin-bottom: 10px;
 }
 
+.dual-gate {
+  margin: 10px 0;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 200, 120, 0.25);
+  background: rgba(80, 60, 20, 0.12);
+}
+
+.dual-gate-row {
+  border-left: 3px solid rgba(255, 200, 120, 0.45);
+}
+
 .fanout-steps {
   list-style: none;
   margin: 8px 0 0;

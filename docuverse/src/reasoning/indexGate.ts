@@ -12,6 +12,8 @@ import {
   reembedBookIndex,
   type BookIndex,
 } from './pipelineA'
+import { buildSemanticIndex, type BookSemanticIndex } from './semanticIndex'
+import { saveSemanticIndex } from './semanticIndexStore'
 import type { OcrPageResult } from '../data/ocrService'
 import type { PageDocument } from '../zigzag/types'
 
@@ -28,6 +30,7 @@ interface IndexGateState {
   message: string
   ready: boolean
   bookIndex: BookIndex | null
+  semanticIndex: BookSemanticIndex | null
   lastError: string | null
 
   reset: () => void
@@ -62,6 +65,7 @@ export const useIndexGate = create<IndexGateState>((set, get) => ({
   message: '尚未导入文献',
   ready: false,
   bookIndex: null,
+  semanticIndex: null,
   lastError: null,
 
   reset: () =>
@@ -70,6 +74,7 @@ export const useIndexGate = create<IndexGateState>((set, get) => ({
       message: '尚未导入文献',
       ready: false,
       bookIndex: null,
+      semanticIndex: null,
       lastError: null,
     }),
 
@@ -91,12 +96,15 @@ export const useIndexGate = create<IndexGateState>((set, get) => ({
 
   setBookIndex: (index, ready = true) => {
     saveBookIndex(index)
+    const semantic = buildSemanticIndex(index)
+    saveSemanticIndex(semantic)
     set({
       bookIndex: index,
+      semanticIndex: semantic,
       ready,
       phase: ready ? 'ready' : 'embedding',
       message: ready
-        ? `文献就绪 · ${index.chunks.length} 段可检索`
+        ? `文献就绪 · ${index.chunks.length} 段 · ${semantic.sections.length} 节`
         : '文献整理中…',
       lastError: null,
     })
@@ -113,11 +121,14 @@ export const useIndexGate = create<IndexGateState>((set, get) => ({
       const raw = await buildBookIndex(input)
       const { index } = await reembedBookIndex(raw)
       saveBookIndex(index)
+      const semantic = buildSemanticIndex(index)
+      saveSemanticIndex(semantic)
       set({
         bookIndex: index,
+        semanticIndex: semantic,
         ready: true,
         phase: 'ready',
-        message: `文献就绪 · ${index.chunks.length} 段可检索`,
+        message: `文献就绪 · ${index.chunks.length} 段 · ${semantic.sections.length} 节`,
         lastError: null,
       })
       return index
@@ -157,11 +168,14 @@ export const useIndexGate = create<IndexGateState>((set, get) => ({
         pageIndices: input.pageIndices,
       })
       saveBookIndex(index)
+      const semantic = buildSemanticIndex(index)
+      saveSemanticIndex(semantic)
       set({
         bookIndex: index,
+        semanticIndex: semantic,
         ready: true,
         phase: 'ready',
-        message: `文献就绪 · ${index.chunks.length} 段可检索（已同步 ${pagesLabel}）`,
+        message: `文献就绪 · ${index.chunks.length} 段 · ${semantic.sections.length} 节（已同步 ${pagesLabel}）`,
         lastError: null,
       })
       return index
@@ -190,11 +204,14 @@ export const useIndexGate = create<IndexGateState>((set, get) => ({
       )
       if (!patched) return existing
       saveBookIndex(index)
+      const semantic = buildSemanticIndex(index)
+      saveSemanticIndex(semantic)
       set({
         bookIndex: index,
+        semanticIndex: semantic,
         ready: true,
         phase: 'ready',
-        message: `文献就绪 · ${index.chunks.length} 段可检索（已更新 T）`,
+        message: `文献就绪 · ${index.chunks.length} 段 · ${semantic.sections.length} 节（已更新 T）`,
         lastError: null,
       })
       return index

@@ -109,7 +109,15 @@ export interface DirectionRecord {
 }
 
 /** 工具网关一步存档：同一步输入/输出 + 前提名单 */
-export type ActionKind = 'retrieve' | 'compose' | 'infer' | 'accept' | 'reuse'
+export type ActionKind =
+  | 'retrieve'
+  | 'compose'
+  | 'infer'
+  | 'accept'
+  | 'reuse'
+  | 'faultIn'
+  | 'collapse'
+  | 'scopeProbe'
 
 export interface ActionRecord {
   actionId: string

@@ -107,16 +107,29 @@ export function buildMotionPlans(input: MotionBrainInput): MotionPlan[] {
     }
 
     if (needOpen.length > 0 && expandQuota > 0) {
-      const faultInKeys = needOpen.slice(0, input.maxKeysPerPlan)
+      const partial =
+        members.length > 1
+          ? needOpen.slice(
+              0,
+              Math.min(
+                input.maxKeysPerPlan,
+                Math.max(1, Math.ceil(members.length / 2)),
+              ),
+            )
+          : needOpen.slice(0, input.maxKeysPerPlan)
+      const faultInKeys = partial
+      const isPartial = faultInKeys.length < needOpen.length
       plans.push({
         rank: 0,
-        planId: planId('expand', unit.unitKey, i),
-        action: 'expand',
+        planId: planId(isPartial ? 'partial' : 'expand', unit.unitKey, i),
+        action: isPartial ? 'faultIn' : 'expand',
         faultInKeys,
         collapseKeys: [],
         unitKey: unit.unitKey,
         score: 0.7 + faultInKeys.length * 0.05,
-        rationale: `expand ${unit.label} · 开 ${faultInKeys.length} 槽`,
+        rationale: isPartial
+          ? `partial fault-in ${unit.label} · ${faultInKeys.length}/${needOpen.length} 槽`
+          : `expand ${unit.label} · 开 ${faultInKeys.length} 槽`,
         trigger: input.validatorSignal,
       })
       expandQuota -= 1
@@ -130,6 +143,28 @@ export function buildMotionPlans(input: MotionBrainInput): MotionPlan[] {
         unitKey: unit.unitKey,
         score: 0.55,
         rationale: '证据缺口 · 提议 fault-in',
+        trigger: input.validatorSignal,
+      })
+    } else if (
+      needOpen.length > 0 &&
+      input.archivePaths.length > 0 &&
+      input.workingSet.expanded.size === 0
+    ) {
+      plans.push({
+        rank: 0,
+        planId: planId('scope', unit.unitKey, i),
+        action: 'scopeRequest',
+        faultInKeys: [],
+        collapseKeys: [],
+        unitKey: unit.unitKey,
+        score: 0.45,
+        rationale: 'archiveOnly · 须 scopeRequest + 人批',
+        scopeRequest: {
+          target: 'archiveOnly',
+          docId: input.docId,
+          maxKeys: input.maxKeysPerPlan,
+          reason: '槽在 archiveOnly 记忆',
+        },
         trigger: input.validatorSignal,
       })
     } else {

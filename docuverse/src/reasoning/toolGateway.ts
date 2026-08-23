@@ -26,6 +26,12 @@ import type {
   FanoutPath,
   InstructionBundle,
 } from './types'
+import type { BookSemanticIndex } from './semanticIndex'
+import {
+  keysInSections,
+  rankSections,
+  sectionHitNote,
+} from './semanticIndex'
 
 function newActionId(kind: string): string {
   return `${kind}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -63,11 +69,34 @@ export async function executeRetrieve(input: {
   bookIndex: BookIndex
   question: string
   topK?: number
+  semanticIndex?: BookSemanticIndex | null
 }): Promise<GatewayRetrieveResult> {
   const question = input.question.trim()
   const topK = input.topK ?? 5
   const resolved = await resolveVqToCandidates(input.bookIndex, question, topK)
-  const draftKeys = resolved.candidates.map((c) => c.R.key)
+
+  let candidates = resolved.candidates
+  let expandNote = resolved.expandNote
+
+  if (input.semanticIndex && candidates.length > 0) {
+    const sectionHits = rankSections(input.semanticIndex, question, 4)
+    if (sectionHits.length > 0) {
+      const sectionIds = new Set(sectionHits.map((h) => h.node.nodeId))
+      const allowed = keysInSections(input.semanticIndex, sectionIds)
+      const filtered = candidates.filter((c) => allowed.has(c.R.key))
+      if (filtered.length > 0) {
+        candidates = filtered
+        expandNote = [
+          expandNote,
+          `节级命中: ${sectionHitNote(sectionHits)}`,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      }
+    }
+  }
+
+  const draftKeys = candidates.map((c) => c.R.key)
   const action: ActionRecord = {
     actionId: newActionId('retrieve'),
     actionKind: 'retrieve',
@@ -76,17 +105,22 @@ export async function executeRetrieve(input: {
     outputsRef: {
       candidateKeys: draftKeys,
       draftKeys,
-      roleNote: FANOUT_ROLE_NOTE.draft,
+      roleNote: [
+        FANOUT_ROLE_NOTE.draft,
+        expandNote ? expandNote : '',
+      ]
+        .filter(Boolean)
+        .join(' · '),
     },
     createdAt: Date.now(),
   }
   return {
     action,
-    candidates: resolved.candidates,
+    candidates,
     searchQuery: resolved.searchQuery,
     poolSize: resolved.poolSize,
     autoLockOk: resolved.autoLockOk,
-    expandNote: resolved.expandNote,
+    expandNote,
   }
 }
 

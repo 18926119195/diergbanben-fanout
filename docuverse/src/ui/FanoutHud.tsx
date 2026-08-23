@@ -26,6 +26,7 @@ import {
   type ComposePolicy,
 } from '../reasoning/composePolicy'
 import type { ActionRecord } from '../reasoning/types'
+import { DualGatePanel } from './DualGatePanel'
 import { WorkingMemoryPanel } from './WorkingMemoryPanel'
 
 export function FanoutHud() {
@@ -34,6 +35,7 @@ export function FanoutHud() {
   const swoopToPage = useDocuverse((s) => s.swoopToPage)
 
   const bookIndex = useIndexGate((s) => s.bookIndex)
+  const semanticIndex = useIndexGate((s) => s.semanticIndex)
   const indexReady = useIndexGate((s) => s.ready)
   const indexPhase = useIndexGate((s) => s.phase)
   const indexMessage = useIndexGate((s) => s.message)
@@ -61,6 +63,9 @@ export function FanoutHud() {
   const rejectPath = useFanout((s) => s.rejectPath)
   const setMotionPlans = useFanout((s) => s.setMotionPlans)
   const lastMotionPlans = useFanout((s) => s.lastMotionPlans)
+  const pendingGatewayPlans = useFanout((s) => s.pendingGatewayPlans)
+  const approveGatewayPlan = useFanout((s) => s.approveGatewayPlan)
+  const rejectGatewayPlan = useFanout((s) => s.rejectGatewayPlan)
   const workingSet = useFanout((s) => s.workingSet)
   const forbidPatterns = useFanout((s) => s.forbidPatterns)
   const focusIdentity = useFanout((s) => s.focusIdentity)
@@ -209,6 +214,7 @@ export function FanoutHud() {
         concurrency: 3,
         pageCount: Math.max(pages.length, 1),
         policy,
+        semanticIndex,
         acceptedPaths: state.acceptedPaths,
         inferredPaths: state.inferredPaths,
         reuseAcceptedCombos: true,
@@ -241,6 +247,7 @@ export function FanoutHud() {
         forbidPatterns: state.forbidPatterns,
         expandBudget,
         draftKeys: prepared.session.draftReport.candidates.map((c) => c.key),
+        archiveOnlyPathIds: state.archiveOnlyPathIds,
       })
       const rows = applyMotionPlansToLetterRows(prepared.session.rows, plans)
       const snapshot = snapshotFromRows({
@@ -257,6 +264,7 @@ export function FanoutHud() {
         snapshot,
       }
       setMotionPlans(plans)
+      useFanout.getState().refreshPendingGateway(bookIndex)
       setLetterPrepare({
         session,
         actions: prepared.actions,
@@ -308,13 +316,15 @@ export function FanoutHud() {
     setError(null)
     setPhase('inferring', '网关·编译器→infer-ops 执行…')
     try {
+      if (!bookIndex) {
+        setError('索引未就绪')
+        return
+      }
       const fanoutState = useFanout.getState()
+      const harness = fanoutState.getHarnessExecBundle(bookIndex)
       const result = await executeLetterDesk(session, {
         onProgress: (msg) => setPhase('inferring', msg),
-        harness: {
-          ctx: fanoutState.getHarnessContext(),
-          motionPlans: fanoutState.lastMotionPlans,
-        },
+        harness,
       })
       const baseIds = new Set([
         session.retrieveAction.actionId,
@@ -338,6 +348,7 @@ export function FanoutHud() {
         draftReport: result.draftReport ?? null,
         letterDesk: result.letterDesk ?? null,
         deferredArchive: result.deferredArchive ?? [],
+        workingSet: result.workingSet,
       })
       const first = result.paths[0]
       if (first?.premisePages[0] !== undefined) {
@@ -802,8 +813,13 @@ export function FanoutHud() {
         <p className="fanout-hint">{strategyLabel(letterStrategy)}</p>
       </div>
 
-      {reviewing && letterDesk && (
+      {reviewing && letterDesk && bookIndex && (
         <div className="fanout-letter-desk">
+          <DualGatePanel
+            pending={pendingGatewayPlans}
+            onApprove={approveGatewayPlan}
+            onReject={rejectGatewayPlan}
+          />
           <div className="fanout-paths-label">
             写信台 · 共 {letterDesk.comboCount} 种组合 · 复用{' '}
             {letterDesk.counts.reuse} · 新推 {letterDesk.counts.expand} · 尚未展开{' '}

@@ -45,6 +45,11 @@ import {
   loadHarnessPersisted,
   saveHarnessPersisted,
 } from './harnessPersistence'
+import {
+  buildPendingGatewayPlans,
+  type PendingGatewayPlan,
+} from './harnessGateway'
+import type { BookIndex } from './pipelineA'
 
 const STORAGE_PREFIX = 'docuverse.fanout.v1:'
 const DEFERRED_PREFIX = 'docuverse.fanout.deferred.v1:'
@@ -259,6 +264,8 @@ interface FanoutState {
   forbidPatterns: ForbidPatternEntry[]
   archiveOnlyPathIds: Set<string>
   lastMotionPlans: MotionPlan[]
+  pendingGatewayPlans: PendingGatewayPlan[]
+  approvedPlanIds: Set<string>
   setCorpus: (corpus: string) => void
   setPhase: (phase: FanoutPhase, progress?: string) => void
   setError: (msg: string | null) => void
@@ -283,6 +290,7 @@ interface FanoutState {
     draftReport?: FanoutDraftReport | null
     letterDesk?: LetterDeskSnapshot | null
     deferredArchive?: DeferredUnitArchive[]
+    workingSet?: WorkingSetState
   }) => void
   setActivePathId: (id: string | null) => void
   setSelectedSlotKey: (key: string | null) => void
@@ -300,6 +308,18 @@ interface FanoutState {
   ) => void
   rejectPath: (pathId: string) => void
   setMotionPlans: (plans: MotionPlan[]) => void
+  refreshPendingGateway: (bookIndex: BookIndex) => void
+  approveGatewayPlan: (planId: string) => void
+  rejectGatewayPlan: (planId: string) => void
+  getHarnessExecBundle: (bookIndex: BookIndex) => {
+    ctx: HarnessContext
+    motionPlans: MotionPlan[]
+    approvedPlanIds: Set<string>
+    pendingGateway: PendingGatewayPlan[]
+    workingSet: WorkingSetState
+    forbidPatterns: ForbidPatternEntry[]
+    archiveOnlyPathIds: Set<string>
+  }
   getHarnessContext: () => HarnessContext
   removeDeferred: (id: string) => void
   clearRun: () => void
@@ -334,6 +354,8 @@ export const useFanout = create<FanoutState>((set, get) => ({
   forbidPatterns: [],
   archiveOnlyPathIds: new Set<string>(),
   lastMotionPlans: [],
+  pendingGatewayPlans: [],
+  approvedPlanIds: new Set<string>(),
 
   setCorpus: (corpus) => {
     const accepted = loadAccepted(corpus)
@@ -380,6 +402,8 @@ export const useFanout = create<FanoutState>((set, get) => ({
       forbidPatterns,
       archiveOnlyPathIds,
       lastMotionPlans: [],
+      pendingGatewayPlans: [],
+      approvedPlanIds: new Set<string>(),
       harnessContext,
     })
   },
@@ -505,6 +529,7 @@ export const useFanout = create<FanoutState>((set, get) => ({
     draftReport,
     letterDesk,
     deferredArchive,
+    workingSet: wsPatch,
   }) => {
     const firstSlot = paths[0]?.slots?.[0]?.key ?? null
     const mergedDeferred = [
@@ -549,7 +574,7 @@ export const useFanout = create<FanoutState>((set, get) => ({
       lastMotionPlans: prev.lastMotionPlans,
     })
     const harnessContext = registerInferPaths(baseCtx, paths)
-    const workingSet = harnessContext.working.workingSet
+    const workingSet = wsPatch ?? harnessContext.working.workingSet
 
     set({
       lastQuestion: question,
@@ -631,6 +656,59 @@ export const useFanout = create<FanoutState>((set, get) => ({
         working: { ...ctx.working, lastMotionPlans: plans },
       },
     })
+  },
+
+  refreshPendingGateway: (bookIndex) => {
+    const s = get()
+    const ctx = s.getHarnessContext()
+    const pending = buildPendingGatewayPlans(
+      s.lastMotionPlans,
+      ctx,
+      bookIndex,
+      s.approvedPlanIds,
+    )
+    set({ pendingGatewayPlans: pending })
+  },
+
+  approveGatewayPlan: (planId) => {
+    const approved = new Set(get().approvedPlanIds)
+    approved.add(planId)
+    const pending = get().pendingGatewayPlans.map((p) =>
+      p.planId === planId ? { ...p, status: 'approved' as const } : p,
+    )
+    set({ approvedPlanIds: approved, pendingGatewayPlans: pending })
+  },
+
+  rejectGatewayPlan: (planId) => {
+    const approved = new Set(get().approvedPlanIds)
+    approved.delete(planId)
+    const pending = get().pendingGatewayPlans.map((p) =>
+      p.planId === planId ? { ...p, status: 'rejected' as const } : p,
+    )
+    set({ approvedPlanIds: approved, pendingGatewayPlans: pending })
+  },
+
+  getHarnessExecBundle: (bookIndex) => {
+    const s = get()
+    const ctx = s.getHarnessContext()
+    const pending =
+      s.pendingGatewayPlans.length > 0
+        ? s.pendingGatewayPlans
+        : buildPendingGatewayPlans(
+            s.lastMotionPlans,
+            ctx,
+            bookIndex,
+            s.approvedPlanIds,
+          )
+    return {
+      ctx,
+      motionPlans: s.lastMotionPlans,
+      approvedPlanIds: s.approvedPlanIds,
+      pendingGateway: pending,
+      workingSet: s.workingSet,
+      forbidPatterns: s.forbidPatterns,
+      archiveOnlyPathIds: s.archiveOnlyPathIds,
+    }
   },
 
   acceptPathWithOptions: (pathId, options = DEFAULT_ACCEPT_OPTIONS) => {

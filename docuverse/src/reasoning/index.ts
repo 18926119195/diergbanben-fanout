@@ -173,6 +173,32 @@ export { loadHarnessPersisted, saveHarnessPersisted } from './harnessPersistence
 export { buildMotionPlansForDesk } from './fanoutRunner'
 export { applyMotionPlansToLetterRows } from './letterDesk'
 export {
+  buildSemanticIndex,
+  rankSections,
+  keysInSections,
+  sectionHitNote,
+} from './semanticIndex'
+export type {
+  BookSemanticIndex,
+  SectionNode,
+  SlotProvenance,
+} from './semanticIndex'
+export {
+  saveSemanticIndex,
+  loadSemanticIndex,
+  clearSemanticIndex,
+} from './semanticIndexStore'
+export {
+  buildPendingGatewayPlans,
+  plansNeedingHumanGate,
+  probeFaultInKeys,
+  runProbeForPlan,
+  executeHarnessMotion,
+  allGatewayPlansApproved,
+} from './harnessGateway'
+export type { PendingGatewayPlan, GatewayGateStatus } from './harnessGateway'
+export { inferWithMicroLoop, MAX_MICRO_LOOPS } from './microLoop'
+export {
   structureChunkBlocks,
   externalBlocksToPageChunks,
 } from './structureChunk'
