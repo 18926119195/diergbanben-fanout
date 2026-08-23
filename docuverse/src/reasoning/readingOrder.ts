@@ -10,10 +10,6 @@ function cx(b: PageBBox): number {
   return (b[0] + b[2]) / 2
 }
 
-function cy(b: PageBBox): number {
-  return (b[1] + b[3]) / 2
-}
-
 function width(b: PageBBox): number {
   return Math.max(0, b[2] - b[0])
 }

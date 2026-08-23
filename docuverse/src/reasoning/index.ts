@@ -130,6 +130,44 @@ export type { FanoutRole } from './fanoutRoles'
 export { buildIdentityRows } from './identityFocus'
 export type { IdentityKind, IdentityRow } from './identityFocus'
 export {
+  buildHarnessContext,
+  acceptPathInContext,
+  rejectPathInContext,
+  registerInferPaths,
+  extractFormalOps,
+} from './harnessContext'
+export { compileHarnessProjection } from './harnessCompiler'
+export {
+  buildMotionPlans,
+  probeScope,
+  motionActionToLetterDecision,
+} from './motionBrain'
+export {
+  emptyWorkingSet,
+  cloneWorkingSet,
+  DEFAULT_ACCEPT_OPTIONS,
+} from './harnessTypes'
+export type {
+  HarnessContext,
+  MotionPlan,
+  MotionAction,
+  WorkingSetState,
+  AcceptPathOptions,
+  PathMemoryEntry,
+  ForbidPatternEntry,
+} from './harnessTypes'
+export {
+  markExpanded,
+  markCollapsed,
+  keysNeedingOpen,
+  applyFaultIn,
+  applyCollapse,
+} from './workingSet'
+export { recordReject, isForbidden, forbidItemsFromPatterns } from './forbidPatterns'
+export { loadHarnessPersisted, saveHarnessPersisted } from './harnessPersistence'
+export { buildMotionPlansForDesk } from './fanoutRunner'
+export { applyMotionPlansToLetterRows } from './letterDesk'
+export {
   structureChunkBlocks,
   externalBlocksToPageChunks,
 } from './structureChunk'

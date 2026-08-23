@@ -27,6 +27,24 @@ import {
   type CurrentObject,
 } from './currentObject'
 import { LOCKED_LLM } from './modelRuntimeConfig'
+import type {
+  AcceptPathOptions,
+  ForbidPatternEntry,
+  HarnessContext,
+  MotionPlan,
+  WorkingSetState,
+} from './harnessTypes'
+import { DEFAULT_ACCEPT_OPTIONS, emptyWorkingSet } from './harnessTypes'
+import {
+  acceptPathInContext,
+  buildHarnessContext,
+  registerInferPaths,
+  rejectPathInContext,
+} from './harnessContext'
+import {
+  loadHarnessPersisted,
+  saveHarnessPersisted,
+} from './harnessPersistence'
 
 const STORAGE_PREFIX = 'docuverse.fanout.v1:'
 const DEFERRED_PREFIX = 'docuverse.fanout.deferred.v1:'
@@ -164,6 +182,53 @@ function actionsForPaths(
   return out
 }
 
+function persistHarnessSlice(state: {
+  corpus: string
+  forbidPatterns: ForbidPatternEntry[]
+  archiveOnlyPathIds: Set<string>
+  workingSet: WorkingSetState
+}): void {
+  saveHarnessPersisted(state.corpus, {
+    forbidPatterns: state.forbidPatterns,
+    archiveOnlyPathIds: state.archiveOnlyPathIds,
+    workingSet: state.workingSet,
+  })
+}
+
+function rebuildHarnessFromState(input: {
+  corpus: string
+  paths: FanoutPath[]
+  acceptedPaths: FanoutPath[]
+  actionLog: ActionRecord[]
+  acceptedActionLog: ActionRecord[]
+  lastQuestion: string
+  deferredArchive: DeferredUnitArchive[]
+  workingSet: WorkingSetState
+  forbidPatterns: ForbidPatternEntry[]
+  archiveOnlyPathIds: Set<string>
+  lastMotionPlans: MotionPlan[]
+}): HarnessContext {
+  const ctx = buildHarnessContext({
+    docId: input.corpus,
+    sessionPaths: input.paths,
+    acceptedPaths: input.acceptedPaths,
+    actionLog: input.actionLog,
+    acceptedActionLog: input.acceptedActionLog,
+    question: input.lastQuestion || input.acceptedPaths[0]?.question || '',
+    deferredUnits: input.deferredArchive,
+    workingSet: input.workingSet,
+    forbidPatterns: input.forbidPatterns,
+    archiveOnlyPathIds: input.archiveOnlyPathIds,
+  })
+  return {
+    ...ctx,
+    working: {
+      ...ctx.working,
+      lastMotionPlans: input.lastMotionPlans,
+    },
+  }
+}
+
 interface FanoutState {
   corpus: string
   phase: FanoutPhase
@@ -188,6 +253,12 @@ interface FanoutState {
   acceptedPaths: FanoutPath[]
   acceptedActionLog: ActionRecord[]
   acceptedQuestion: string
+  /** Harness working set + memory partitions */
+  harnessContext: HarnessContext | null
+  workingSet: WorkingSetState
+  forbidPatterns: ForbidPatternEntry[]
+  archiveOnlyPathIds: Set<string>
+  lastMotionPlans: MotionPlan[]
   setCorpus: (corpus: string) => void
   setPhase: (phase: FanoutPhase, progress?: string) => void
   setError: (msg: string | null) => void
@@ -223,6 +294,13 @@ interface FanoutState {
     pathId?: string | null
   }) => void
   setPathAccepted: (pathId: string, accepted: boolean) => void
+  acceptPathWithOptions: (
+    pathId: string,
+    options?: AcceptPathOptions,
+  ) => void
+  rejectPath: (pathId: string) => void
+  setMotionPlans: (plans: MotionPlan[]) => void
+  getHarnessContext: () => HarnessContext
   removeDeferred: (id: string) => void
   clearRun: () => void
 }
@@ -251,9 +329,31 @@ export const useFanout = create<FanoutState>((set, get) => ({
   acceptedPaths: [],
   acceptedActionLog: [],
   acceptedQuestion: '',
+  harnessContext: null,
+  workingSet: emptyWorkingSet(),
+  forbidPatterns: [],
+  archiveOnlyPathIds: new Set<string>(),
+  lastMotionPlans: [],
 
   setCorpus: (corpus) => {
     const accepted = loadAccepted(corpus)
+    const harnessPersist = loadHarnessPersisted(corpus)
+    const workingSet = harnessPersist.workingSet
+    const forbidPatterns = harnessPersist.forbidPatterns
+    const archiveOnlyPathIds = harnessPersist.archiveOnlyPathIds
+    const harnessContext = rebuildHarnessFromState({
+      corpus,
+      paths: [],
+      acceptedPaths: accepted.paths,
+      actionLog: [],
+      acceptedActionLog: accepted.actionLog,
+      lastQuestion: '',
+      deferredArchive: loadDeferred(corpus),
+      workingSet,
+      forbidPatterns,
+      archiveOnlyPathIds,
+      lastMotionPlans: [],
+    })
     set({
       corpus,
       acceptedPaths: accepted.paths,
@@ -276,6 +376,11 @@ export const useFanout = create<FanoutState>((set, get) => ({
       phase: 'idle',
       progress: '',
       error: null,
+      workingSet,
+      forbidPatterns,
+      archiveOnlyPathIds,
+      lastMotionPlans: [],
+      harnessContext,
     })
   },
 
@@ -429,6 +534,23 @@ export const useFanout = create<FanoutState>((set, get) => ({
     const inferredPaths = [...byId.values()]
     saveInferred(get().corpus, inferredPaths)
 
+    const prev = get()
+    const baseCtx = rebuildHarnessFromState({
+      corpus: prev.corpus,
+      paths: prev.paths,
+      acceptedPaths: prev.acceptedPaths,
+      actionLog: prev.actionLog,
+      acceptedActionLog: prev.acceptedActionLog,
+      lastQuestion: question,
+      deferredArchive: deferredUnique,
+      workingSet: prev.workingSet,
+      forbidPatterns: prev.forbidPatterns,
+      archiveOnlyPathIds: prev.archiveOnlyPathIds,
+      lastMotionPlans: prev.lastMotionPlans,
+    })
+    const harnessContext = registerInferPaths(baseCtx, paths)
+    const workingSet = harnessContext.working.workingSet
+
     set({
       lastQuestion: question,
       paths,
@@ -442,9 +564,17 @@ export const useFanout = create<FanoutState>((set, get) => ({
       letterSession: null,
       deferredArchive: deferredUnique,
       inferredPaths,
+      workingSet,
+      harnessContext,
       phase: 'done',
       progress: '',
       error: null,
+    })
+    persistHarnessSlice({
+      corpus: get().corpus,
+      forbidPatterns: get().forbidPatterns,
+      archiveOnlyPathIds: get().archiveOnlyPathIds,
+      workingSet,
     })
   },
 
@@ -475,106 +605,184 @@ export const useFanout = create<FanoutState>((set, get) => ({
     })
   },
 
-  setPathAccepted: (pathId, accepted) => {
-    const sessionPaths = get().paths.map((p) =>
-      p.pathId === pathId
-        ? { ...p, direction: { ...p.direction, accepted } }
-        : p,
-    )
-    set({ paths: sessionPaths })
+  getHarnessContext: () => {
+    const s = get()
+    return rebuildHarnessFromState({
+      corpus: s.corpus,
+      paths: s.paths,
+      acceptedPaths: s.acceptedPaths,
+      actionLog: s.actionLog,
+      acceptedActionLog: s.acceptedActionLog,
+      lastQuestion: s.lastQuestion,
+      deferredArchive: s.deferredArchive,
+      workingSet: s.workingSet,
+      forbidPatterns: s.forbidPatterns,
+      archiveOnlyPathIds: s.archiveOnlyPathIds,
+      lastMotionPlans: s.lastMotionPlans,
+    })
+  },
+
+  setMotionPlans: (plans) => {
+    const ctx = get().getHarnessContext()
+    set({
+      lastMotionPlans: plans,
+      harnessContext: {
+        ...ctx,
+        working: { ...ctx.working, lastMotionPlans: plans },
+      },
+    })
+  },
+
+  acceptPathWithOptions: (pathId, options = DEFAULT_ACCEPT_OPTIONS) => {
+    const s = get()
+    let ctx = s.getHarnessContext()
+    ctx = acceptPathInContext(ctx, pathId, options)
 
     const hit =
-      sessionPaths.find((p) => p.pathId === pathId) ??
-      get().acceptedPaths.find((p) => p.pathId === pathId)
+      s.paths.find((p) => p.pathId === pathId) ??
+      s.acceptedPaths.find((p) => p.pathId === pathId)
     if (!hit) return
 
-    let stamped: FanoutPath = {
-      ...hit,
-      direction: { ...hit.direction, accepted },
-    }
+    const entry =
+      ctx.historical.settledPaths.find((e) => e.pathId === pathId) ??
+      ctx.working.currentMemory.find((e) => e.pathId === pathId) ??
+      ctx.historical.archivePaths.find((e) => e.pathId === pathId)
+    const stamped = entry?.path ?? hit
 
     const premiseKeys =
       stamped.direction.premiseKeys?.length
         ? stamped.direction.premiseKeys
-        : (stamped.slots?.map((s) => s.key) ?? [])
+        : (stamped.slots?.map((sl) => sl.key) ?? [])
 
-    let acceptAction: ActionRecord | null = null
-    if (accepted === true) {
-      acceptAction = {
-        actionId: newActionId('accept'),
-        actionKind: 'accept',
-        premiseKeys,
-        inputsRef: {
-          question: stamped.question,
-          role: 'accept',
-          pathId: stamped.pathId,
-        },
-        outputsRef: {
-          assetId: stamped.direction.directionId,
-          conclusion: stamped.direction.conclusion,
-          path: stamped.direction.path,
-          pathMarker: stamped.direction.pathMarker,
-          roleNote: FANOUT_ROLE_NOTE.accept,
-        },
-        createdAt: Date.now(),
-      }
-      const nextIds = [
-        ...(stamped.direction.actionIds ?? stamped.actionIds ?? []),
-        acceptAction.actionId,
-      ]
-      stamped = {
-        ...stamped,
-        actionIds: nextIds,
-        direction: {
-          ...stamped.direction,
-          actionIds: nextIds,
-          accepted: true,
-          cacheTier: 'accepted',
-        },
-      }
+    const acceptAction: ActionRecord = {
+      actionId: newActionId('accept'),
+      actionKind: 'accept',
+      premiseKeys,
+      inputsRef: {
+        question: stamped.question,
+        role: 'accept',
+        pathId: stamped.pathId,
+      },
+      outputsRef: {
+        assetId: stamped.direction.directionId,
+        conclusion: stamped.direction.conclusion,
+        path: stamped.direction.path,
+        pathMarker: stamped.direction.pathMarker,
+        roleNote: options.pinToCurrent
+          ? `${FANOUT_ROLE_NOTE.accept} · 定在当前`
+          : `${FANOUT_ROLE_NOTE.accept} · 只进永久库`,
+      },
+      createdAt: Date.now(),
     }
 
-    let acceptedPaths = get().acceptedPaths.filter((p) => p.pathId !== pathId)
-    let pool = [
-      ...get().acceptedActionLog,
-      ...get().actionLog,
-      ...(acceptAction ? [acceptAction] : []),
+    const nextIds = [
+      ...(stamped.direction.actionIds ?? stamped.actionIds ?? []),
+      acceptAction.actionId,
+    ]
+    const finalPath: FanoutPath = {
+      ...stamped,
+      actionIds: nextIds,
+      direction: {
+        ...stamped.direction,
+        actionIds: nextIds,
+        accepted: true,
+        cacheTier: 'accepted',
+      },
+    }
+
+    let acceptedPaths = s.acceptedPaths.filter((p) => p.pathId !== pathId)
+    acceptedPaths = [...acceptedPaths, finalPath]
+
+    let archiveOnlyPathIds = new Set(s.archiveOnlyPathIds)
+    if (!options.pinToCurrent) {
+      archiveOnlyPathIds.add(pathId)
+    } else {
+      archiveOnlyPathIds.delete(pathId)
+    }
+
+    const pool = [
+      ...s.acceptedActionLog,
+      ...s.actionLog,
+      acceptAction,
     ]
     const seen = new Set<string>()
-    pool = pool.filter((a) => {
+    const deduped = pool.filter((a) => {
       if (seen.has(a.actionId)) return false
       seen.add(a.actionId)
       return true
     })
 
-    if (accepted === true) {
-      acceptedPaths = [...acceptedPaths, stamped]
-    }
-
-    const sessionLog = acceptAction
-      ? [...get().actionLog, acceptAction]
-      : get().actionLog
-
-    const acceptedActionLog = actionsForPaths(acceptedPaths, pool)
+    const acceptedActionLog = actionsForPaths(acceptedPaths, deduped)
     const acceptedQuestion =
-      acceptedPaths[0]?.question || get().acceptedQuestion || get().lastQuestion
+      acceptedPaths[0]?.question || s.acceptedQuestion || s.lastQuestion
+    const sessionPaths = s.paths.filter((p) => p.pathId !== pathId)
+    const workingSet = ctx.working.workingSet
+    const forbidPatterns = ctx.historical.forbidPatterns
 
     set({
-      paths: get().paths.map((p) => (p.pathId === pathId ? stamped : p)),
-      actionLog: sessionLog,
+      paths: sessionPaths,
+      actionLog: [...s.actionLog, acceptAction],
       acceptedPaths,
       acceptedActionLog,
       acceptedQuestion,
-      focusedIdentityId: accepted
-        ? `asset:${stamped.direction.directionId}`
-        : get().focusedIdentityId,
-      focusedActionId: acceptAction?.actionId ?? get().focusedActionId,
+      workingSet,
+      forbidPatterns,
+      archiveOnlyPathIds,
+      harnessContext: ctx,
+      activePathId: sessionPaths[0]?.pathId ?? acceptedPaths[0]?.pathId ?? null,
+      focusedIdentityId: `asset:${finalPath.direction.directionId}`,
+      focusedActionId: acceptAction.actionId,
     })
-    saveAccepted(get().corpus, {
+
+    saveAccepted(s.corpus, {
       paths: acceptedPaths,
       actionLog: acceptedActionLog,
       lastQuestion: acceptedQuestion,
     })
+    persistHarnessSlice({
+      corpus: s.corpus,
+      forbidPatterns,
+      archiveOnlyPathIds,
+      workingSet,
+    })
+  },
+
+  rejectPath: (pathId) => {
+    const s = get()
+    let ctx = s.getHarnessContext()
+    const { ctx: nextCtx, newlyForbidden } = rejectPathInContext(ctx, pathId)
+    ctx = nextCtx
+
+    const sessionPaths = s.paths.filter((p) => p.pathId !== pathId)
+    const workingSet = ctx.working.workingSet
+    const forbidPatterns = ctx.historical.forbidPatterns
+
+    set({
+      paths: sessionPaths,
+      workingSet,
+      forbidPatterns,
+      harnessContext: ctx,
+      activePathId:
+        sessionPaths[0]?.pathId ??
+        (s.activePathId === pathId ? null : s.activePathId),
+      error: newlyForbidden
+        ? '该组合已重复拒绝≥3次，运动脑将自动 forbid'
+        : s.error,
+    })
+    persistHarnessSlice({
+      corpus: s.corpus,
+      forbidPatterns,
+      archiveOnlyPathIds: s.archiveOnlyPathIds,
+      workingSet,
+    })
+  },
+
+  setPathAccepted: (pathId, accepted) => {
+    if (accepted === true) {
+      get().acceptPathWithOptions(pathId, DEFAULT_ACCEPT_OPTIONS)
+      return
+    }
+    get().rejectPath(pathId)
   },
 
   removeDeferred: (id) => {

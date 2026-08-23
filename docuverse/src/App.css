@@ -2288,6 +2288,71 @@ body.emphasize-pen-on .workbench-root * {
   text-underline-offset: 3px;
 }
 
+.working-memory {
+  margin: 10px 0;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 200, 255, 0.15);
+  background: rgba(0, 40, 80, 0.12);
+}
+
+.working-memory-ops {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.working-memory-op {
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.working-memory-op .op-badge {
+  display: inline-block;
+  min-width: 1.4rem;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: #7ad7ff;
+  margin-right: 6px;
+}
+
+.working-memory-op .op-kind {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin-right: 8px;
+}
+
+.working-memory-op .op-note {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.working-memory-op .op-claim {
+  font-size: 0.78rem;
+  margin-top: 4px;
+  line-height: 1.35;
+}
+
+.fanout-accept-dialog {
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 255, 160, 0.25);
+  background: rgba(40, 80, 50, 0.15);
+}
+
+.motion-plans-preview {
+  margin-bottom: 10px;
+}
+
 .fanout-steps {
   list-style: none;
   margin: 8px 0 0;

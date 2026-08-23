@@ -6,6 +6,8 @@
 import type { FanoutInferUnit, FanoutUnitKind } from './fanoutCompose'
 import type { FanoutPath } from './types'
 import { findReusablePath, type ReuseHit } from './toolArchive'
+import type { MotionPlan } from './harnessTypes'
+import { motionActionToLetterDecision } from './motionBrain'
 
 /** Per-unit gate decided on the letter desk (not by the runner). */
 export type LetterUnitDecision = 'reuse' | 'expand' | 'deferred'
@@ -205,6 +207,33 @@ export function proposeLetterRows(input: {
       unitKey,
       decision: 'deferred' as const,
       rationale: '尚未展开 · 已入待推存档，以后有空再推',
+    }
+  })
+}
+
+/**
+ * Overlay motion-brain plans onto letter rows (match by unitKey).
+ * Keeps manual overrides when no matching plan.
+ */
+export function applyMotionPlansToLetterRows(
+  rows: LetterUnitRow[],
+  plans: ReadonlyArray<MotionPlan>,
+): LetterUnitRow[] {
+  const byUnit = new Map<string, MotionPlan>()
+  for (const p of plans) {
+    if (p.unitKey && !byUnit.has(p.unitKey)) byUnit.set(p.unitKey, p)
+  }
+  return rows.map((row) => {
+    const plan = byUnit.get(row.unitKey)
+    if (!plan) return row
+    const decision = motionActionToLetterDecision(plan.action)
+    if (!decision) return row
+    return {
+      ...row,
+      decision,
+      rationale: `[运动脑#${plan.rank}] ${plan.rationale}`,
+      reuseFromPathId:
+        plan.action === 'reuse' ? plan.reuseFromPathId : undefined,
     }
   })
 }

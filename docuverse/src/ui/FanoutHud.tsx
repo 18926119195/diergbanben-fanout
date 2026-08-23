@@ -5,8 +5,13 @@ import {
   executeLetterDesk,
   prepareLetterDesk,
   rebuildLetterDeskWithLock,
+  buildMotionPlansForDesk,
 } from '../reasoning/fanoutRunner'
-import { strategyLabel } from '../reasoning/letterDesk'
+import {
+  strategyLabel,
+  applyMotionPlansToLetterRows,
+  snapshotFromRows,
+} from '../reasoning/letterDesk'
 import type { LetterRunStrategy, LetterUnitDecision } from '../reasoning/letterDesk'
 import { recommendToolClasses } from '../reasoning/toolArchive'
 import { resolveLineage } from '../reasoning/lineage'
@@ -21,6 +26,7 @@ import {
   type ComposePolicy,
 } from '../reasoning/composePolicy'
 import type { ActionRecord } from '../reasoning/types'
+import { WorkingMemoryPanel } from './WorkingMemoryPanel'
 
 export function FanoutHud() {
   const corpus = useDocuverse((s) => s.corpus)
@@ -51,7 +57,12 @@ export function FanoutHud() {
   const setError = useFanout((s) => s.setError)
   const setRunResult = useFanout((s) => s.setRunResult)
   const setActivePathId = useFanout((s) => s.setActivePathId)
-  const setPathAccepted = useFanout((s) => s.setPathAccepted)
+  const acceptPathWithOptions = useFanout((s) => s.acceptPathWithOptions)
+  const rejectPath = useFanout((s) => s.rejectPath)
+  const setMotionPlans = useFanout((s) => s.setMotionPlans)
+  const lastMotionPlans = useFanout((s) => s.lastMotionPlans)
+  const workingSet = useFanout((s) => s.workingSet)
+  const forbidPatterns = useFanout((s) => s.forbidPatterns)
   const focusIdentity = useFanout((s) => s.focusIdentity)
   const clearRun = useFanout((s) => s.clearRun)
   const letterDesk = useFanout((s) => s.letterDesk)
@@ -87,6 +98,8 @@ export function FanoutHud() {
   )
   const [strategyDraft, setStrategyDraft] = useState('')
   const [strategyNote, setStrategyNote] = useState('')
+  const [acceptDialogOpen, setAcceptDialogOpen] = useState(false)
+  const [acceptPinCurrent, setAcceptPinCurrent] = useState(true)
 
   useEffect(() => {
     setCorpus(corpus || 'default')
@@ -218,8 +231,34 @@ export function FanoutHud() {
         setPhase('error', '')
         return
       }
+      const plans = buildMotionPlansForDesk({
+        question: q,
+        docId: state.corpus,
+        units: prepared.session.units,
+        acceptedPaths: state.acceptedPaths,
+        inferredPaths: state.inferredPaths,
+        workingSet: state.workingSet,
+        forbidPatterns: state.forbidPatterns,
+        expandBudget,
+        draftKeys: prepared.session.draftReport.candidates.map((c) => c.key),
+      })
+      const rows = applyMotionPlansToLetterRows(prepared.session.rows, plans)
+      const snapshot = snapshotFromRows({
+        question: q,
+        comboCount: prepared.session.units.length,
+        strategy: letterStrategy,
+        expandBudget,
+        rows,
+        status: 'review',
+      })
+      const session = {
+        ...prepared.session,
+        rows,
+        snapshot,
+      }
+      setMotionPlans(plans)
       setLetterPrepare({
-        session: prepared.session,
+        session,
         actions: prepared.actions,
       })
     } catch (e) {
@@ -765,6 +804,47 @@ export function FanoutHud() {
             {letterDesk.counts.reuse} · 新推 {letterDesk.counts.expand} · 尚未展开{' '}
             {letterDesk.counts.deferred}
           </div>
+          {lastMotionPlans.length > 0 && (
+            <div className="fanout-block motion-plans-preview">
+              <div className="fanout-k">
+                运动脑提议 · {lastMotionPlans.length} 条（不含全文 T）
+              </div>
+              <ul className="fanout-letter-rows">
+                {lastMotionPlans.slice(0, 12).map((plan) => (
+                  <li key={plan.planId} className="fanout-letter-row">
+                    <div className="fanout-v">
+                      #{plan.rank} {plan.action}
+                      {plan.unitKey ? ` · ${shortHandle(plan.unitKey)}` : ''}
+                      <span className="fanout-v muted">
+                        {' '}
+                        score={plan.score.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="fanout-hint">{plan.rationale}</div>
+                    {plan.faultInKeys.length > 0 && (
+                      <div className="fanout-chips">
+                        {plan.faultInKeys.map((k) => (
+                          <span key={k} className="fanout-chip" title={k}>
+                            {shortHandle(k)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {forbidPatterns.filter((p) => p.rejectCount >= 3).length > 0 && (
+                <p className="fanout-hint">
+                  forbid 模式：{' '}
+                  {forbidPatterns.filter((p) => p.rejectCount >= 3).length} 条
+                </p>
+              )}
+              <p className="fanout-hint">
+                workingSet expanded={workingSet.expanded.size} collapsed=
+                {workingSet.collapsed.size}
+              </p>
+            </div>
+          )}
           <div className="fanout-actions">
             <button
               type="button"
@@ -1033,37 +1113,83 @@ export function FanoutHud() {
             </div>
           </div>
 
+          <WorkingMemoryPanel
+            path={active}
+            selectedKey={selectedSlotKey}
+            onKeyClick={(key, page) => jumpPremise(page, key)}
+          />
+
           <div className="fanout-accept">
             <button
               type="button"
-              className={
-                active.direction.accepted === true
-                  ? 'fanout-btn primary'
-                  : 'fanout-btn'
-              }
-              onClick={() => setPathAccepted(active.pathId, true)}
+              className="fanout-btn primary"
+              onClick={() => {
+                setAcceptPinCurrent(true)
+                setAcceptDialogOpen(true)
+              }}
             >
-              采纳（铸资产身份）
+              采纳…
             </button>
             <button
               type="button"
-              className={
-                active.direction.accepted === false
-                  ? 'fanout-btn danger'
-                  : 'fanout-btn'
-              }
-              onClick={() => setPathAccepted(active.pathId, false)}
+              className="fanout-btn danger"
+              onClick={() => active && rejectPath(active.pathId)}
             >
-              不采纳
+              拒绝（discarded）
             </button>
           </div>
+          {acceptDialogOpen && active && (
+            <div className="fanout-accept-dialog">
+              <div className="fanout-k">采纳分区</div>
+              <label className="fanout-check">
+                <input
+                  type="radio"
+                  name="accept-tier"
+                  checked={acceptPinCurrent}
+                  onChange={() => setAcceptPinCurrent(true)}
+                />
+                定在当前任务（currentMemory · pathMarker 进下轮 prompt）
+              </label>
+              <label className="fanout-check">
+                <input
+                  type="radio"
+                  name="accept-tier"
+                  checked={!acceptPinCurrent}
+                  onChange={() => setAcceptPinCurrent(false)}
+                />
+                只进永久库（archiveOnly · 须 scopeRequest 才能搜）
+              </label>
+              <div className="fanout-actions">
+                <button
+                  type="button"
+                  className="fanout-btn primary"
+                  onClick={() => {
+                    acceptPathWithOptions(active.pathId, {
+                      pinToCurrent: acceptPinCurrent,
+                      lineageClosure: true,
+                    })
+                    setAcceptDialogOpen(false)
+                  }}
+                >
+                  确认采纳
+                </button>
+                <button
+                  type="button"
+                  className="fanout-btn"
+                  onClick={() => setAcceptDialogOpen(false)}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
           {active.direction.accepted === true ? (
             <p className="fanout-hint">
               已铸资产 {shortHandle(active.direction.directionId)} · 路径标记已回流
             </p>
           ) : (
             <p className="fanout-hint">
-              未采纳：仅本次会话可见；采纳后固化 pathMarker 供以后秒懂
+              pending：采纳后进 historical；拒绝默认 discarded，重复≥3 次 → forbid
             </p>
           )}
 

@@ -4,6 +4,7 @@
  * page_norm AABB on the slot is the restore geometry (not re-derived from text).
  */
 
+import type { FormalOp, FormalPathV1 } from './formalPath'
 import type { SlotMemberRef } from './ocrSlot'
 
 export type LinkType =
@@ -99,6 +100,12 @@ export interface DirectionRecord {
   fingerprint?: string
   /** accepted = 资产；inferred = 结论缓存（可未采纳复用） */
   cacheTier?: 'accepted' | 'inferred'
+  /** 结构化推导步骤（infer-ops 过检后） */
+  formalOps?: FormalOp[]
+  /** 形式化路径包（与 formalOps 二选一或并存） */
+  formalPath?: FormalPathV1
+  /** 本路径引用的其它 pathId（reuse / 依赖） */
+  referencedPathIds?: string[]
 }
 
 /** 工具网关一步存档：同一步输入/输出 + 前提名单 */

@@ -33,6 +33,13 @@ import { buildFingerprint, collectRefluxMarkers } from './toolArchive'
 import { LOCKED_LLM } from './modelRuntimeConfig'
 import type { BookIndex, CircleCandidate } from './pipelineA'
 import type { ActionRecord, FanoutPath } from './types'
+import type {
+  ForbidPatternEntry,
+  MotionPlan,
+  WorkingSetState,
+} from './harnessTypes'
+import { buildMotionPlans } from './motionBrain'
+import { pathToMemoryEntry } from './harnessContext'
 
 function ringAngle(strandIndex: number, total: number): number {
   const n = Math.max(total, 1)
@@ -120,6 +127,63 @@ export interface FanoutRunResult {
   draftReport?: FanoutDraftReport
   letterDesk?: LetterDeskSnapshot
   deferredArchive?: DeferredUnitArchive[]
+}
+
+/** Build motion plans for letter desk (no full T text). */
+export function buildMotionPlansForDesk(input: {
+  question: string
+  docId: string
+  units: FanoutInferUnit[]
+  acceptedPaths: FanoutPath[]
+  inferredPaths: FanoutPath[]
+  workingSet: WorkingSetState
+  forbidPatterns: ForbidPatternEntry[]
+  expandBudget: number
+  draftKeys: string[]
+}): MotionPlan[] {
+  const composeCandidates = input.units.map((u) => ({
+    unitKey: u.candidate.R.key,
+    kind: u.kind,
+    label: u.label,
+    memberKeys: unitMemberKeysOf(u),
+  }))
+
+  const reuseHits: Array<{ unitKey: string; pathId: string; score: number }> =
+    []
+  for (const u of input.units) {
+    const hit = findReusableForCombo({
+      unit: u,
+      question: input.question,
+      accepted: input.acceptedPaths,
+      inferred: input.inferredPaths,
+      modelId: LOCKED_LLM.chatModel,
+    })
+    if (hit) {
+      reuseHits.push({
+        unitKey: u.candidate.R.key,
+        pathId: hit.path.pathId,
+        score: hit.tier === 'accepted' ? 0.9 : 0.75,
+      })
+    }
+  }
+
+  const currentMemory = input.acceptedPaths
+    .filter((p) => p.direction.accepted === true)
+    .map((p) => pathToMemoryEntry(p, 'settled', 'current'))
+
+  return buildMotionPlans({
+    question: input.question,
+    docId: input.docId,
+    draftKeys: input.draftKeys,
+    composeCandidates,
+    workingSet: input.workingSet,
+    currentMemory,
+    archivePaths: [],
+    reuseHits,
+    expandBudget: input.expandBudget,
+    maxKeysPerPlan: 8,
+    forbidPatterns: input.forbidPatterns,
+  })
 }
 
 function isNearFullPage(bbox: [number, number, number, number]): boolean {
