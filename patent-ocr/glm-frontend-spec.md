@@ -1,0 +1,275 @@
+# reasoning
+
+用户希望根据 Ted Nelson 的专利 US2012/0137202A1《System for Exploring Connections Between Data Pages》（探索数据页面之间连接的系统）的图像，获得一份“前端 1:1 实现规范”。
+
+**1. 分析输入：**
+*   **来源材料：** 来自专利申请 US2012/0137202A1 的 6 张图片。
+    *   图 1（第 1 页）：显示了一个系统视图，其中“当前页面”（12）位于中心/前景。存在连接到其他页面的“光束”（14a, 14b, 14c）。背景中有一个“伴随页面”（16, 18a）。底部显示了文本内容。
+    *   图 2（第 2 页）：一个透视图，显示页面（12）和从其边缘射出的连接（14），指向其他位置（可能是伴随页面或背景页面）。它展示了 3D 空间排列。
+    *   图 3（第 3 页）：一个更抽象、密集的视图，显示许多连接（光束）从一个点或区域扇形展开，暗示了高密度互联性。
+    *   图 4（第 4 页）：文本内容的特写，可能显示“并列”或“包含”机制，其中来自其他文档的文本被嵌入或链接到当前视图中。
+    *   图 5（第 5 页）：另一个文本视图，显示重叠层或连接。
+    *   图 6C（第 8 页）：一个结构图（节点-边风格），显示特定类型的链接：“指针”、“不同意”、“相似”。这定义了*数据模型*。
+
+**2. 解构需求：**
+*   **目标：** 前端实现规范（前端 1:1 实现规格）。
+*   **语言：** 中文。
+*   **关键组件：**
+    1.  **场景构图 (Scene Composition)：** 当前页面 / 伴随页面 / 背景页面的空间布局、阅读平面、景深。
+    2.  **连接可视化 (Connection Visualization)：** 光束/跨度/角点；Transclusion 与 Flink 的视觉差异（颜色、透明度、高亮）。
+    3.  **导航交互 (Navigation Interaction)：** Swooping、Visting（拼写 sworfing 可能是 visiting 或 swooping 的笔误，但通常指 Nelson 的术语如“swoop”）、逐步切换；键盘/鼠标映射。
+    4.  **UI 元素与风格 (UI Elements & Style)：** 字体、颜色、材质感。
+    5.  **技术栈 (Tech Stack)：** React + Three.js 组件树和数据结构。
+
+**3. 分析专利中的视觉元素（思维沙盒）：**
+*   *核心概念：* 仙纳度 (Xanadu) / 超文本 (Hypertext) / 超文本 (Hypermedia)。Ted Nelson 的愿景涉及可见的连接、transclusion（引用而不复制）以及并排查看源文件。
+*   *视觉效果：*
+    *   **页面：** 平面矩形。主页面是清晰的。背景页面是模糊或半透明的。
+    *   **连接（光束）：** 从页面边缘发出的直线或略微弯曲的线条。它们看起来像激光束或结构支撑。
+    *   **深度：** 明显的 Z 轴分离。主阅读平面在 z=0。背景页面在 z < 0（向后）。
+    *   **图 6C 数据：** 链接具有类型（指针、不同意、相似）。这需要编码进可视化中。
+
+**4. 起草规范 - 逐节进行：**
+
+*   **1. 场景构图 (Scene Composition):**
+    *   *坐标系：* 以相机为中心还是以页面为中心？通常是以页面为中心。
+    *   *当前页面 (12)：* 屏幕中央，垂直或略有倾斜（如图 2 所示）。让我们坚持使用标准的“阅读模式”垂直方向，但在 3D 空间中。
+    *   *伴随页面 (16)：* 浮动在侧面或后方。图 1 显示它位于右侧且略靠后。
+    *   *背景页面：* 更远处的模糊形状。
+    *   *相机：* 透视投影。FOV 约 50-60 度。
+
+*   **2. 连接可视化 (Connections):**
+    *   *光束 (Beams)：* 连接的直线几何体。它们需要看起来像“光线”。
+    *   *类型：*
+        *   *Transclusion（包含）：* 通常意味着内容嵌入其中。视觉上：实线，也许用金色或纯白色。
+        *   *Flink（正面链接？）：* 专利提到了“Flink”（可能是 Face-link 或类似概念，或者只是通用链接）。图 6C 区分了“指针”、“不同意”、“相似”。
+        *   *视觉属性：*
+            *   指针：蓝色/青色。
+            *   不同意：红色/橙色。
+            *   相似：绿色/紫色。
+            *   透明度：随距离衰减。
+
+*   **3. 导航交互 (Navigation):**
+    *   *Swooping（俯冲）：* 相机沿曲线移动到目标页面。
+    *   *Visting（访问）：* 高亮显示连接。
+    *   *输入：* 鼠标拖动旋转视角？还是点击光束进行移动？Nelson 的界面通常是直接操纵。点击光束 -> “飞向”目标。
+
+*   **4. UI 元素 (UI Elements):**
+    *   *字体：* 衬线体用于正文（学术感），无衬线体用于 UI 覆盖层。
+    *   *材质：* 页面 = 白色纸张，带有细微噪点/纹理。光束 = 发光/自发光材质。
+
+*   **5. 技术实现 (React + Three.js):**
+    *   *状态管理：* 需要 `useStore` (Zustand) 来处理 `activePageId`、`connections`、`cameraTarget`。
+    *   *Three.js 对象：*
+        *   `PageMesh`：带有 CanvasTexture 的 PlaneGeometry。
+        *   `LinkLine`：连接坐标的 Line 或 TubeGeometry。
+        *   `PostProcessing`：用于背景页面产生景深 (DOF) 模糊效果。
+
+**5. 完善细节（自我修正/优化）：**
+*   *批评：* 用户要求的是“1:1 实现”。我需要具体说明数值。
+*   *尺寸：* 标准页面纵横比（例如 A4 或信纸比例 1:1.414）。
+*   *颜色：* 从图中提取。线条是黑色的，但为了“数字实现”，我们需要霓虹色/科技美学来代表“仙纳度”的感觉。我将提出一种“蓝图/全息”配色方案。
+*   *图 6C 特征：* 必须包含 `linkType` 枚举。
+
+**6. 最终输出结构（中文）：**
+
+*   **标题：** US2012/0137202 A1 前端复刻规格书
+*   **第一部分：空间布局 (3D Scene):** 定义单位（米），Z 轴位置。
+*   **第二部分：连接系统 (The "Beam" System):** 几何体细节，着色器逻辑。
+*   **第三部分：交互逻辑:** 动画曲线（贝塞尔）。
+*   **第四部分：UI 视觉:** CSS-in-JS 或 Tailwind 类。
+*   **第五部分：代码架构:** 接口定义，组件树。
+
+**(起草过程中的自我修正)：** 专利图显示文本非常清晰。这表明“页面”是纹理贴图。“光束”连接特定的字符范围（角点）。我必须提到“角点”（span start/end）。
+
+让我们编写回复。
+
+# content
+
+这是一份基于 **Ted Nelson 专利 US2012/0137202 A1**（《数据页面连接探索系统》）的前端一比一高保真实现规格书。该方案采用 **React + Three.js (R3F)** 架构，旨在还原 Xanadu 空间超文本（Spatial Hypertext）的核心视觉体验：**Transclusion（包含）** 与 **Vistage（可视连接）**。
+
+---
+
+### 1. 场景构图：三维阅读空间 (3D Reading Space)
+
+该场景并非简单的 2D 网页，而是一个具有物理深度的“文档宇宙”。
+
+#### 1.1 空间坐标系与布局
+*   **原点 (0,0,0)**：设定为 **Current Page (当前页)** 的几何中心。
+*   **单位制**：1 单位 = 10cm (模拟真实纸张尺度)。
+*   **Camera 参数**：
+    *   **Type**: `PerspectiveCamera`
+    *   **FOV**: 50° (模拟人眼阅读焦距)
+    *   **Position**: `[0, 0, 2.5]` (初始位于当前页正前方 25cm 处)
+    *   **Near/Far**: `0.1 / 100`
+
+#### 1.2 页面层级 (Z-Axis Depth)
+根据附图 FIG.1 & FIG.2 的透视关系：
+
+| 元素 | Z轴位置 | 尺寸 (宽x高) | 视觉状态 | 描述 |
+| :--- | :--- | :--- | :--- | :--- |
+| **Current Page (12)** | **Z = 0** | 21 x 29.7 (A4比例) | **100% 清晰, 不透明** | 主阅读平面，承载主要文本流。 |
+| **Companion Page (16)** | **Z = -1.5 ~ -2.5** | 21 x 29.7 | **80% 不透明, 微模糊** | 位于右侧或左下方（FIG.1显示在右侧），作为上下文参考。 |
+| **Background Pages** | **Z < -5** | 变化 | **< 30% 透明度, 强模糊 (DOF)** | 远景节点，仅显示轮廓或缩略图，暗示庞大的关联网络。 |
+| **Connection Beams** | **贯穿 Z 轴** | 动态长度 | **发光材质 (Additive Blending)** | 连接不同深度的页面。 |
+
+#### 1.3 阅读平面倾斜
+*   参考 FIG.2，页面允许轻微的 **Pitch (X轴旋转)** 和 **Yaw (Y轴旋转)**。
+*   **默认姿态**: Rotation `[0, 0, 0]` (正对相机)。
+*   **动态姿态**: 当鼠标悬停时，伴随页面可微调至 `[-5°, 15°, 2°]` 以展示立体感。
+
+---
+
+### 2. 连接可视化：Beam / Span / Transclusion
+
+这是本系统的灵魂。连接不是简单的箭头，而是具有体积感的“光束”(Beams)。
+
+#### 2.1 数据结构基础 (基于 FIG.6C)
+每个连接必须携带以下元数据：
+```typescript
+interface FLink {
+  id: string;
+  type: 'pointer' | 'disagreement' | 'resemblance'; // 对应 FIG.6C
+  source: { pageId: string; span: [number, number] }; // 起始字符索引
+  target: { pageId: string; span: [number, number] }; // 目标字符索引
+  cornerPoints: [Vector3, Vector3]; // 3D空间中的实际端点
+}
+```
+
+#### 2.2 视觉差异规范
+
+| 类型 | 颜色 (Hex) | 材质/形态 | 透明度 | 行为描述 |
+| :--- | :--- | :--- | :--- | :--- |
+| **Pointer (跳转)** | **#00E5FF (青色)** | 细圆柱体 (`CylinderGeometry`) | 0.8 | 标准“点击即走”链接。 |
+| **Disagreement (反驳)** | **#FF3D00 (红橙)** | 锯齿状/虚线管 (`DashedLine`) | 0.9 | 表示观点冲突，视觉上具有攻击性。 |
+| **Resemblance (相似)** | **#76FF03 (亮绿)** | 半透明宽带 (`BoxGeometry` thin) | 0.3 | 表示内容相似或引用 (Transclusion)。 |
+| **Transclusion (包含)** | **#FFD700 (金)** | **实体高亮框 + 连线** | 1.0 | **核心特性**：目标文本直接“幽灵般”浮现在当前页面上。 |
+
+#### 2.3 Corner Points (角点) 渲染
+*   文本中的每一个 Link 都有精确的起止坐标。
+*   **实现方式**：将 DOM 文本的位置通过 `getBoundingClientRect()` 映射回 Three.js 的 3D 世界坐标。
+*   **Span 高亮**：在文本背后渲染一个半透明的 `PlaneGeometry`，颜色对应 Link Type。
+
+---
+
+### 3. 导航交互：Swooping & Visting
+
+专利强调的非线性导航体验。
+
+#### 3.1 Swooping (俯冲/飞入)
+当用户点击一个 Beam 时：
+1.  **相机动画**：相机不直接瞬移，而是沿着一条 **Cubic Bezier Curve** 移动。
+    *   起点：当前位置
+    *   控制点1：当前位置 + 向上偏移 `(0, 2, 0)`
+    *   控制点2：目标页面前方 + 向下偏移 `(0, -1, 2)`
+    *   终点：目标页面的标准阅读位 `(0, 0, 2.5)`
+2.  **时长**: 800ms - 1200ms (Easing: `easeInOutCubic`)。
+3.  **视野变化**: FOV 在运动中可微调至 60° 增加速度感，到达后恢复 50°。
+
+#### 3.2 Visting (巡视/预览)
+*   **Hover on Beam**: 鼠标悬停在连线上时，目标页面（即使很远）会暂时 **Focus (聚焦)**，模糊效果消失，并在连线旁浮现一个小型的 Tooltip 预览窗口 (FIG.1 中的 18a)。
+*   **操作**: 
+    *   **Mouse**: 左键点击 = Swoop; 右键拖拽 = 旋转视角; 滚轮 = 缩放 (Z轴移动)。
+    *   **Keyboard**: 
+        *   `Tab`: 循环切换当前页上的下一个 Link Span。
+        *   `Enter`: Swoop 到选中的 Link。
+        *   `Esc`: 返回上一节点 (Backtrack)。
+
+---
+
+### 4. UI 元素清单与视觉风格
+
+#### 4.1 字体排版
+*   **正文**: `Georgia`, `Times New Roman`, serif (衬线体，模拟论文/书籍质感)。
+*   **字号**: Base 16px, Line-height 1.6 (保证可读性)。
+*   **标注/ID**: `Roboto Mono`, monospace (用于显示 ID 如 "14a", "16", "22")。
+
+#### 4.2 配色方案 (Xanadu Theme)
+*   **背景**: `#050505` (极深灰黑，凸显发光线条) 或 `#F0F2F5` (淡工程图纸色)。建议使用 **暗色模式** 以突显 Beam 的发光效果。
+*   **页面底色**: `#FFFFFF` (纯白)，带轻微纸质纹理 (Noise Texture)。
+*   **网格**: 地面辅助线使用淡蓝色 `rgba(0, 229, 255, 0.05)`。
+
+#### 4.3 材质质感
+*   **Page Material**: `MeshPhysicalMaterial`
+    *   `roughness`: 0.1 (光滑纸张)
+    *   `metalness`: 0.0
+    *   `clearcoat`: 0.1 (轻微光泽)
+*   **Beam Material**: `MeshBasicMaterial` 或 `ShaderMaterial`
+    *   `transparent`: true
+    *   `blending`: THREE.AdditiveBlending (叠加发光)
+
+---
+
+### 5. 可落地的 React + Three.js 实现方案
+
+#### 5.1 组件树
+```jsx
+<App>
+  <Canvas> {/* R3F Canvas */}
+    < lighting /> {/* 环境光 + 方向光 */}
+    <PostProcessing effects={["Bloom", "DepthOfField"]} /> {/* 关键：背景虚化 */}
+    
+    <SceneController> {/* 管理相机状态 */}
+      <PageEntity id="current" position={[0,0,0]} content={...} />
+      <PageEntity id="companion" position={[1.5, -0.5, -2]} content={...} isBackground />
+      
+      <ConnectionLayer>
+         <BeamRenderer links={data.links} /> {/* 渲染所有连线 */}
+      </ConnectionLayer>
+      
+      <MouseInteractor /> {/* 射线检测 Raycasting */}
+      <CameraRig /> {/* 处理 Swooping 动画 */}
+    </SceneController>
+  </Canvas>
+  
+  <HTMLOverlay> {/* DOM 浮层，用于复杂的文本选择和高亮 */}
+     <TextHighlight spans={activeSpans} />
+  </HTMLOverlay>
+</App>
+```
+
+#### 5.2 核心数据结构示例
+```javascript
+// Document Node Schema
+const PageNode = {
+  id: "US2012/0137202-P1",
+  type: "PatentPage",
+  content: "In the beginning God created...", // HTML String or Raw Text
+  position: { x: 0, y: 0, z: 0 },
+  metadata: { date: "May 31, 2012", sheet: 1 }
+};
+
+// Connection Schema (The "Flink")
+const LinkSchema = {
+  id: "link-001",
+  source: {
+    pageId: "P1",
+    span: { start: 10, end: 25 }, // "beginning God"
+    localPos: { x: -5, y: 8, z: 0.01 } // 相对于页面的3D坐标偏移
+  },
+  target: {
+    pageId: "P2", // Companion page
+    span: { start: 0, end: 15 },
+    localPos: { x: -4, y: 9, z: -2.01 }
+  },
+  style: {
+    type: 'resemblance', 
+    color: '#76FF03',
+    width: 0.02,
+    curvature: 0.2 // 0=直线, 1=大幅弧线
+  }
+};
+```
+
+#### 5.3 关键技术难点解决
+1.  **文本坐标同步**:
+    *   使用 `react-xr` 或自定义 Hook 监听 DOM 文本的位置。
+    *   将 DOM 的 `offsetLeft/Top` 通过 `camera.project` 映射为 3D 坐标，确保 Beam 精准连接到文字行，而不是整页。
+2.  **景深 (DOF)**:
+    *   使用 `@react-three/postprocessing` 的 `DepthOfField` 效果。
+    *   `focusDistance`: 设定为当前页面的 Z 坐标。
+    *   `focalLength`: 根据 FOV 动态调整，确保背景页面 (Companion) 呈现自然的散景 (Bokeh) 模糊。
+3.  **性能优化**:
+    *   当 Links 数量 > 100 时，使用 `InstancedMesh` 批量渲染 Beam，避免 Draw Call 过高。
+
+这份规格完全遵循了专利附图中展现的“空间文档”理念，可直接用于指导开发一个现代 Web 版本的 Xanadu 空间浏览器。

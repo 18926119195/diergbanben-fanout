@@ -1,0 +1,798 @@
+/**
+ * Fan-out orchestration:
+ * prepareLetterDesk (draft+compose+propose) → human review → executeLetterDesk (gateway).
+ * runFanout remains a one-shot helper (auto-confirm proposed decisions).
+ */
+
+import {
+  executeCompose,
+  executeInfer,
+  executeRetrieve,
+  executeReuse,
+} from './toolGateway'
+import type { FanoutInferUnit } from './fanoutCompose'
+import {
+  defaultComposePolicy,
+  type ComposePolicy,
+} from './composePolicy'
+import { FANOUT_ROLE_NOTE } from './fanoutRoles'
+import {
+  buildPathMarker,
+  findReusableForCombo,
+  proposeLetterRows,
+  rowsToDeferredArchive,
+  snapshotFromRows,
+  unitMemberKeysOf,
+  type DeferredUnitArchive,
+  type LetterDeskSnapshot,
+  type LetterRunStrategy,
+  type LetterUnitDecision,
+  type LetterUnitRow,
+} from './letterDesk'
+import { buildFingerprint, collectRefluxMarkers } from './toolArchive'
+import { LOCKED_LLM } from './modelRuntimeConfig'
+import type { BookIndex, CircleCandidate } from './pipelineA'
+import type { ActionRecord, FanoutPath } from './types'
+
+function ringAngle(strandIndex: number, total: number): number {
+  const n = Math.max(total, 1)
+  return (strandIndex / n) * Math.PI * 2 - Math.PI / 2
+}
+
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (next < items.length) {
+        const i = next
+        next += 1
+        results[i] = await fn(items[i], i)
+      }
+    },
+  )
+  await Promise.all(workers)
+  return results
+}
+
+export interface FanoutRunOptions {
+  topK?: number
+  concurrency?: number
+  pageCount?: number
+  policy?: ComposePolicy
+  acceptedPaths?: FanoutPath[]
+  /** 已推断缓存（未采纳也可复用） */
+  inferredPaths?: FanoutPath[]
+  reuseAcceptedCombos?: boolean
+  letterStrategy?: LetterRunStrategy
+  expandBudget?: number
+  /** 钉死对象后只保留这些草稿 key */
+  lockedSlotKeys?: string[]
+  /** 推理模型 id，进入指纹；换模型不命中旧缓存 */
+  modelId?: string
+  /** @deprecated use policy */
+  windowRadius?: number
+  /** @deprecated use policy */
+  includeFine?: boolean
+  /** @deprecated use policy */
+  includeWindow?: boolean
+  onProgress?: (msg: string) => void
+}
+
+export interface FanoutDraftReport {
+  searchQuery: string
+  expandNote: string
+  autoLockOk: boolean
+  poolSize: number
+  candidates: Array<{ key: string; score: number; page: number }>
+}
+
+/** Session held between prepare (review) and execute (gateway). */
+export interface LetterDeskSession {
+  question: string
+  bookIndex: BookIndex
+  pageCount: number
+  concurrency: number
+  units: FanoutInferUnit[]
+  rows: LetterUnitRow[]
+  snapshot: LetterDeskSnapshot
+  draftReport: FanoutDraftReport
+  retrieveAction: ActionRecord
+  composeAction: ActionRecord
+  acceptedPaths: FanoutPath[]
+  inferredPaths: FanoutPath[]
+  modelId: string
+  /** Raw draft hits kept for re-compose after lock */
+  draftCandidates: CircleCandidate[]
+}
+
+export interface FanoutRunResult {
+  ok: boolean
+  error?: string
+  paths: FanoutPath[]
+  actions: ActionRecord[]
+  searchQuery: string
+  draftReport?: FanoutDraftReport
+  letterDesk?: LetterDeskSnapshot
+  deferredArchive?: DeferredUnitArchive[]
+}
+
+function isNearFullPage(bbox: [number, number, number, number]): boolean {
+  const area = Math.max(0, bbox[2] - bbox[0]) * Math.max(0, bbox[3] - bbox[1])
+  return area >= 0.82 * 1_000_000
+}
+
+function pickTightBBox(chunk: {
+  bbox: [number, number, number, number]
+  inkBoxes?: Array<[number, number, number, number]>
+}): [number, number, number, number] {
+  if (!isNearFullPage(chunk.bbox)) return chunk.bbox
+  const parts = (chunk.inkBoxes ?? []).filter((b) => !isNearFullPage(b))
+  if (parts.length === 1) return parts[0]
+  if (parts.length > 1) {
+    let x0 = 1000
+    let y0 = 1000
+    let x1 = 0
+    let y1 = 0
+    for (const b of parts) {
+      x0 = Math.min(x0, b[0])
+      y0 = Math.min(y0, b[1])
+      x1 = Math.max(x1, b[2])
+      y1 = Math.max(y1, b[3])
+    }
+    return [x0, y0, x1, y1]
+  }
+  return chunk.bbox
+}
+
+function premisePagesOf(unit: FanoutInferUnit): number[] {
+  const pages = new Set<number>()
+  pages.add(unit.candidate.R.page)
+  for (const box of unit.candidate.boxes) pages.add(box.page)
+  for (const m of unit.candidate.members) pages.add(m.page)
+  return [...pages]
+}
+
+function composeScopeOf(
+  pages: number[],
+  memberCount: number,
+): 'single' | 'same_page' | 'cross_page' {
+  if (memberCount <= 1) return 'single'
+  if (pages.length <= 1) return 'same_page'
+  return 'cross_page'
+}
+
+function slotsOf(
+  unit: FanoutInferUnit,
+  bookIndex: BookIndex,
+): FanoutPath['slots'] {
+  const { candidate } = unit
+  const text = candidate.excerpt.replace(/^【[^\n]*】\n?/, '').trim()
+  const keys =
+    candidate.R.memberKeys && candidate.R.memberKeys.length > 0
+      ? candidate.R.memberKeys
+      : candidate.members.map((m) => m.slotId)
+
+  if (keys.length > 0) {
+    return keys.map((key, i) => {
+      const chunk = bookIndex.chunks.find((c) => c.key === key)
+      const member = candidate.members.find((m) => m.slotId === key)
+      const bbox = chunk
+        ? pickTightBBox(chunk)
+        : !member?.bbox || isNearFullPage(member.bbox)
+          ? ([100, 120, 500, 320] as [number, number, number, number])
+          : member.bbox
+      const page =
+        chunk?.page ?? member?.page ?? candidate.boxes[i]?.page ?? candidate.R.page
+      const excerpt = chunk
+        ? (chunk.faces.text?.content ?? chunk.content).slice(0, 96)
+        : text.slice(0, 96)
+      return { key, page, bbox, excerpt }
+    })
+  }
+
+  return candidate.boxes.map((b) => ({
+    key: candidate.R.key,
+    page: b.page,
+    bbox: isNearFullPage(b.bbox)
+      ? ([100, 120, 500, 320] as [number, number, number, number])
+      : b.bbox,
+    excerpt: text.slice(0, 96),
+  }))
+}
+
+function resolvePolicy(options: FanoutRunOptions): ComposePolicy {
+  const policy: ComposePolicy = {
+    ...defaultComposePolicy(),
+    ...options.policy,
+  }
+  if (options.policy == null) {
+    if (typeof options.includeFine === 'boolean')
+      policy.includeFine = options.includeFine
+    if (typeof options.includeWindow === 'boolean')
+      policy.includeWindow = options.includeWindow
+    if (typeof options.windowRadius === 'number')
+      policy.windowRadius = options.windowRadius
+  }
+  return policy
+}
+
+/**
+ * Draft + compose + propose unit decisions. Does NOT call the gateway infer/reuse.
+ */
+export async function prepareLetterDesk(
+  bookIndex: BookIndex,
+  question: string,
+  options: FanoutRunOptions = {},
+): Promise<
+  | { ok: true; session: LetterDeskSession; actions: ActionRecord[] }
+  | { ok: false; error: string; actions: ActionRecord[]; draftReport?: FanoutDraftReport; searchQuery: string }
+> {
+  const q = question.trim()
+  if (!q) {
+    return {
+      ok: false,
+      error: '请先输入问题',
+      actions: [],
+      searchQuery: '',
+    }
+  }
+
+  const topK = options.topK ?? 5
+  const concurrency = options.concurrency ?? 3
+  const pageCount = Math.max(options.pageCount ?? 1, 1)
+  const allowReuse = options.reuseAcceptedCombos !== false
+  const acceptedPaths = (options.acceptedPaths ?? []).filter(
+    (p) => p.direction.accepted === true,
+  )
+  const inferredPaths = options.inferredPaths ?? []
+  const modelId = options.modelId || LOCKED_LLM.chatModel
+  const strategy: LetterRunStrategy = options.letterStrategy ?? 'reuse_prefer'
+  const expandBudget = options.expandBudget ?? 3
+  const actions: ActionRecord[] = []
+
+  options.onProgress?.('草稿·检索候选 key*（非注入）…')
+  const retrieved = await executeRetrieve({ bookIndex, question: q, topK })
+  actions.push(retrieved.action)
+
+  if (retrieved.candidates.length === 0) {
+    return {
+      ok: false,
+      error: `未检索到可推理段落（池=${retrieved.poolSize}）`,
+      actions,
+      searchQuery: retrieved.searchQuery,
+      draftReport: {
+        searchQuery: retrieved.searchQuery,
+        expandNote: retrieved.expandNote,
+        autoLockOk: retrieved.autoLockOk,
+        poolSize: retrieved.poolSize,
+        candidates: [],
+      },
+    }
+  }
+
+  let fineCandidates = retrieved.candidates
+  const locked = options.lockedSlotKeys?.filter(Boolean) ?? []
+  if (locked.length > 0) {
+    const allow = new Set(locked)
+    const filtered = fineCandidates.filter((c) => allow.has(c.R.key))
+    if (filtered.length > 0) fineCandidates = filtered
+  }
+
+  const draftReport: FanoutDraftReport = {
+    searchQuery: retrieved.searchQuery,
+    expandNote: retrieved.expandNote,
+    autoLockOk: retrieved.autoLockOk,
+    poolSize: retrieved.poolSize,
+    candidates: retrieved.candidates.map((c) => ({
+      key: c.R.key,
+      score: c.score,
+      page: c.R.page,
+    })),
+  }
+
+  const draftAction: ActionRecord = {
+    ...retrieved.action,
+    outputsRef: {
+      ...retrieved.action.outputsRef,
+      roleNote: [
+        FANOUT_ROLE_NOTE.draft,
+        retrieved.autoLockOk ? 'autoLockOk' : 'autoLockOff',
+        retrieved.expandNote || '',
+        `pool=${retrieved.poolSize}`,
+        locked.length ? `locked=${locked.length}` : '',
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    },
+  }
+  actions[actions.length - 1] = draftAction
+
+  options.onProgress?.(
+    retrieved.autoLockOk
+      ? `写信·草稿已递交（建议锁 Top1 · ${draftReport.candidates.length} 料）…`
+      : `写信·按配方选定 member_keys（${fineCandidates.length} 料）…`,
+  )
+
+  const policy = resolvePolicy(options)
+  const composed = await executeCompose({
+    bookIndex,
+    fineCandidates,
+    question: q,
+    policy,
+  })
+  actions.push(composed.action)
+
+  if (!composed.ok || composed.units.length === 0) {
+    return {
+      ok: false,
+      error: composed.error || '组合后无可用推理单元',
+      actions,
+      searchQuery: retrieved.searchQuery,
+      draftReport,
+    }
+  }
+
+  const rows = proposeLetterRows({
+    units: composed.units,
+    question: q,
+    acceptedPaths,
+    inferredPaths,
+    modelId,
+    strategy,
+    expandBudget,
+    allowReuse,
+  })
+  const snapshot = snapshotFromRows({
+    question: q,
+    comboCount: composed.units.length,
+    strategy,
+    expandBudget,
+    rows,
+    status: 'review',
+  })
+
+  options.onProgress?.(
+    `写信台·共 ${snapshot.comboCount} 种组合 · 复用 ${snapshot.counts.reuse} · 新推 ${snapshot.counts.expand} · 尚未展开 ${snapshot.counts.deferred}（先审再不跑）`,
+  )
+
+  return {
+    ok: true,
+    actions,
+    session: {
+      question: q,
+      bookIndex,
+      pageCount,
+      concurrency,
+      units: composed.units,
+      rows,
+      snapshot,
+      draftReport,
+      retrieveAction: draftAction,
+      composeAction: composed.action,
+      acceptedPaths,
+      inferredPaths,
+      modelId,
+      draftCandidates: retrieved.candidates,
+    },
+  }
+}
+
+export function reproposeLetterDesk(
+  session: LetterDeskSession,
+  input: {
+    strategy: LetterRunStrategy
+    expandBudget: number
+    allowReuse?: boolean
+  },
+): LetterDeskSession {
+  const rows = proposeLetterRows({
+    units: session.units,
+    question: session.question,
+    acceptedPaths: session.acceptedPaths,
+    inferredPaths: session.inferredPaths,
+    modelId: session.modelId,
+    strategy: input.strategy,
+    expandBudget: input.expandBudget,
+    allowReuse: input.allowReuse !== false,
+  })
+  return {
+    ...session,
+    rows,
+    snapshot: snapshotFromRows({
+      question: session.question,
+      comboCount: session.units.length,
+      strategy: input.strategy,
+      expandBudget: input.expandBudget,
+      rows,
+      status: 'review',
+    }),
+  }
+}
+
+export function setLetterUnitDecision(
+  session: LetterDeskSession,
+  index: number,
+  decision: LetterUnitDecision,
+): LetterDeskSession {
+  const rows = session.rows.map((r) => {
+    if (r.index !== index) return r
+    if (decision === 'reuse') {
+      const hit = findReusableForCombo({
+        unit: session.units[index],
+        question: session.question,
+        accepted: session.acceptedPaths,
+        inferred: session.inferredPaths,
+        modelId: session.modelId,
+      })
+      if (!hit) {
+        return {
+          ...r,
+          decision: 'expand' as const,
+          rationale: '无可用存档（采纳/已推断）→ 改为新推',
+          reuseFromPathId: undefined,
+        }
+      }
+      return {
+        ...r,
+        decision: 'reuse' as const,
+        rationale: `手动复用（${hit.tier}）← ${hit.path.pathId}`,
+        reuseFromPathId: hit.path.pathId,
+      }
+    }
+    if (decision === 'deferred') {
+      return {
+        ...r,
+        decision: 'deferred' as const,
+        rationale: '手动标为尚未展开',
+        reuseFromPathId: undefined,
+      }
+    }
+    return {
+      ...r,
+      decision: 'expand' as const,
+      rationale: '手动标为本轮新推',
+      reuseFromPathId: undefined,
+    }
+  })
+  return {
+    ...session,
+    rows,
+    snapshot: snapshotFromRows({
+      question: session.question,
+      comboCount: session.units.length,
+      strategy: session.snapshot.strategy,
+      expandBudget: session.snapshot.expandBudget,
+      rows,
+      status: 'review',
+    }),
+  }
+}
+
+/**
+ * Re-compose letter desk after user locks current object (草稿锁细).
+ */
+export async function rebuildLetterDeskWithLock(
+  session: LetterDeskSession,
+  input: {
+    lockedSlotKeys: string[]
+    policy?: ComposePolicy
+    strategy: LetterRunStrategy
+    expandBudget: number
+  },
+): Promise<
+  | { ok: true; session: LetterDeskSession; action: ActionRecord }
+  | { ok: false; error: string; action?: ActionRecord }
+> {
+  const allow = new Set(input.lockedSlotKeys.filter(Boolean))
+  let fine = session.draftCandidates
+  if (allow.size > 0) {
+    const filtered = fine.filter((c) => allow.has(c.R.key))
+    if (filtered.length > 0) fine = filtered
+  }
+  const composed = await executeCompose({
+    bookIndex: session.bookIndex,
+    fineCandidates: fine,
+    question: session.question,
+    policy: input.policy,
+  })
+  if (!composed.ok || composed.units.length === 0) {
+    return {
+      ok: false,
+      error: composed.error || '按锁定对象组合后无单元',
+      action: composed.action,
+    }
+  }
+  const rows = proposeLetterRows({
+    units: composed.units,
+    question: session.question,
+    acceptedPaths: session.acceptedPaths,
+    inferredPaths: session.inferredPaths,
+    modelId: session.modelId,
+    strategy: input.strategy,
+    expandBudget: input.expandBudget,
+    allowReuse: true,
+  })
+  return {
+    ok: true,
+    action: composed.action,
+    session: {
+      ...session,
+      units: composed.units,
+      rows,
+      composeAction: composed.action,
+      snapshot: snapshotFromRows({
+        question: session.question,
+        comboCount: composed.units.length,
+        strategy: input.strategy,
+        expandBudget: input.expandBudget,
+        rows,
+        status: 'review',
+      }),
+    },
+  }
+}
+/**
+ * Gateway execute: only reuse + expand rows. Deferred → archive, not run.
+ */
+export async function executeLetterDesk(
+  session: LetterDeskSession,
+  options: { onProgress?: (msg: string) => void } = {},
+): Promise<FanoutRunResult & { returnToDesk?: boolean }> {
+  const {
+    question: q,
+    bookIndex,
+    pageCount,
+    concurrency,
+    units,
+    rows,
+    draftReport,
+    retrieveAction,
+    composeAction,
+    acceptedPaths,
+    inferredPaths,
+    modelId,
+  } = session
+
+  const actions: ActionRecord[] = [retrieveAction, composeAction]
+  const toReuse: Array<{ unit: FanoutInferUnit; index: number; from: FanoutPath }> =
+    []
+  const toInfer: Array<{ unit: FanoutInferUnit; index: number }> = []
+  const archivePool = [...acceptedPaths, ...inferredPaths]
+
+  for (const row of rows) {
+    const unit = units[row.index]
+    if (!unit) continue
+    if (row.decision === 'reuse' && row.reuseFromPathId) {
+      const from =
+        archivePool.find((p) => p.pathId === row.reuseFromPathId) ??
+        findReusableForCombo({
+          unit,
+          question: q,
+          accepted: acceptedPaths,
+          inferred: inferredPaths,
+          modelId,
+        })?.path
+      if (from) {
+        toReuse.push({ unit, index: row.index, from })
+        continue
+      }
+      toInfer.push({ unit, index: row.index })
+      continue
+    }
+    if (row.decision === 'expand') {
+      toInfer.push({ unit, index: row.index })
+    }
+  }
+
+  const deferredArchive = rowsToDeferredArchive(q, rows)
+  const refluxPool = collectRefluxMarkers(archivePool, 6)
+  const refluxPremise = refluxPool[0]
+    ? {
+        conclusion: refluxPool[0].conclusion,
+        pathSummary: refluxPool
+          .map((m) => m.pathSummary)
+          .join(' || ')
+          .slice(0, 400),
+        fromKey: refluxPool[0].fromKey,
+      }
+    : undefined
+
+  options.onProgress?.(
+    toReuse.length + toInfer.length > 0
+      ? `网关·新推 ${toInfer.length} · 复用 ${toReuse.length} · 跳过尚未展开 ${deferredArchive.length}${
+          refluxPremise ? ' · 带路径标记回流' : ''
+        }`
+      : `网关·本轮无执行单元（${deferredArchive.length} 条尚未展开已存档）`,
+  )
+
+  if (toReuse.length + toInfer.length === 0) {
+    return {
+      ok: deferredArchive.length > 0,
+      error:
+        deferredArchive.length > 0
+          ? undefined
+          : '写信台无 reuse/expand 单元可执行',
+      paths: [],
+      actions,
+      searchQuery: draftReport.searchQuery,
+      draftReport,
+      letterDesk: {
+        ...session.snapshot,
+        status: deferredArchive.length > 0 ? 'done' : 'review',
+        counts: {
+          reuse: 0,
+          expand: 0,
+          deferred: deferredArchive.length,
+        },
+      },
+      deferredArchive,
+      returnToDesk: deferredArchive.length === 0,
+    }
+  }
+
+  const inferResults = await mapPool(
+    toInfer,
+    concurrency,
+    async ({ unit, index }) => {
+      const result = await executeInfer({
+        candidate: unit.candidate,
+        question: q,
+        refluxPremise,
+        preferCompactExcerpt: Boolean(refluxPremise),
+      })
+      return {
+        result,
+        index,
+        unit,
+        reusedFromPathId: undefined as string | undefined,
+      }
+    },
+  )
+
+  const reuseResults = toReuse.map(({ unit, index, from }) => {
+    const result = executeReuse({
+      candidate: unit.candidate,
+      question: q,
+      fromPath: from,
+    })
+    return {
+      result,
+      index,
+      unit,
+      reusedFromPathId: from.pathId,
+    }
+  })
+
+  const merged = [...inferResults, ...reuseResults].sort(
+    (a, b) => a.index - b.index,
+  )
+
+  const paths: FanoutPath[] = []
+  const retrieveId = retrieveAction.actionId
+  const composeId = composeAction.actionId
+
+  for (const { result, index, unit, reusedFromPathId } of merged) {
+    actions.push(result.action)
+    if (!result.ok || !result.direction) continue
+
+    const premisePages = premisePagesOf(unit)
+    const memberKeys = unitMemberKeysOf(unit)
+    // Model-authored path/conclusion → compact marker for later reflux
+    const pathMarker = buildPathMarker({
+      unitLabel: unit.label,
+      memberKeys,
+      question: q,
+      conclusion: result.direction.conclusion,
+      path: result.direction.path,
+      reused: Boolean(reusedFromPathId),
+    })
+    const fingerprint = buildFingerprint({
+      toolClass: 'infer',
+      memberKeys,
+      stepOrder: unit.kind,
+      modelId,
+    })
+
+    const direction = {
+      ...result.direction,
+      premiseKeys: memberKeys,
+      actionIds: [retrieveId, composeId, result.action.actionId],
+      path: reusedFromPathId
+        ? result.direction.path
+        : `【${unit.label}】\n${result.direction.path}`,
+      pathMarker,
+      fingerprint,
+      cacheTier: 'inferred' as const,
+    }
+
+    const last = actions[actions.length - 1]
+    if (last) {
+      actions[actions.length - 1] = {
+        ...last,
+        outputsRef: { ...last.outputsRef, pathMarker },
+      }
+    }
+
+    const anchorPage = premisePages[0] ?? unit.candidate.R.page
+    const slots = slotsOf(unit, bookIndex)
+    paths.push({
+      pathId: `path_${result.action.actionId}`,
+      question: q,
+      direction,
+      actionIds: direction.actionIds ?? [],
+      premisePages,
+      slots,
+      unitKind: unit.kind,
+      unitLabel: reusedFromPathId ? `复用·${unit.label}` : unit.label,
+      composeScope: composeScopeOf(premisePages, memberKeys.length),
+      injectedExcerpt: unit.candidate.excerpt,
+      conclusionAngle:
+        ringAngle(anchorPage, pageCount) +
+        (index - (units.length - 1) / 2) * 0.06,
+      createdAt: Date.now(),
+      reusedFromPathId,
+    })
+  }
+
+  if (paths.length === 0 && deferredArchive.length === 0) {
+    const lastErr = merged
+      .map((r) => r.result.error)
+      .filter(Boolean)
+      .slice(-1)[0]
+    return {
+      ok: false,
+      error: `${lastErr || '全部单元推理失败'} · 已回写信台，请改信后再确认执行`,
+      paths: [],
+      actions,
+      searchQuery: draftReport.searchQuery,
+      draftReport,
+      letterDesk: { ...session.snapshot, status: 'review' },
+      deferredArchive,
+      returnToDesk: true,
+    }
+  }
+
+  return {
+    ok: true,
+    paths,
+    actions,
+    searchQuery: draftReport.searchQuery,
+    draftReport,
+    letterDesk: {
+      ...session.snapshot,
+      status: 'done',
+    },
+    deferredArchive,
+  }
+}
+
+/**
+ * One-shot: prepare + auto-confirm proposed decisions + execute.
+ * Prefer prepareLetterDesk → review → executeLetterDesk in the HUD.
+ */
+export async function runFanout(
+  bookIndex: BookIndex,
+  question: string,
+  options: FanoutRunOptions = {},
+): Promise<FanoutRunResult> {
+  const prepared = await prepareLetterDesk(bookIndex, question, options)
+  if (!prepared.ok) {
+    return {
+      ok: false,
+      error: prepared.error,
+      paths: [],
+      actions: prepared.actions,
+      searchQuery: prepared.searchQuery,
+      draftReport: prepared.draftReport,
+    }
+  }
+  return executeLetterDesk(prepared.session, {
+    onProgress: options.onProgress,
+  })
+}
