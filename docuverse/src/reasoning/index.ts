@@ -84,7 +84,6 @@ export { resolveLineage } from './lineage'
 export type { LineageNode } from './lineage'
 export {
   executeCompose,
-  executeInfer,
   executeInferOps,
   executeRetrieve,
   executeReuse,

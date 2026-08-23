@@ -3,7 +3,6 @@
  * Draft retrieves candidates; letter writer selects member_keys; gateway injects + stamps.
  */
 
-import { buildInferBundle } from './bundle'
 import {
   composeFanoutUnits,
   type FanoutInferUnit,
@@ -13,7 +12,6 @@ import {
   type ComposePolicy,
 } from './composePolicy'
 import { FANOUT_ROLE_NOTE } from './fanoutRoles'
-import { callLlmWithBundle } from './llmClient'
 import { demoAuthHeaders } from './demoAuth'
 import type { AbBlock, FormalPathV1 } from './formalPath'
 import { validateFormalPath } from './formalValidator'
@@ -24,7 +22,6 @@ import type {
   ActionRecord,
   DirectionRecord,
   FanoutPath,
-  InstructionBundle,
 } from './types'
 import type { BookSemanticIndex } from './semanticIndex'
 import {
@@ -56,14 +53,12 @@ export interface GatewayComposeResult {
 export interface GatewayInferResult {
   action: ActionRecord
   direction: DirectionRecord | null
-  bundle: InstructionBundle | null
   ok: boolean
   error?: string
 }
 
 /**
- * 草稿检索（Draft）：只产出候选 key* 名单。
- * premiseKeys 故意为空 — 草稿不是注入；注入由写信配方 + 网关 infer 登记。
+ * 草稿检索：premiseKeys 故意为空 — 草稿不是注入；注入由写信配方 + 网关 infer-ops 登记。
  */
 export async function executeRetrieve(input: {
   bookIndex: BookIndex
@@ -235,121 +230,6 @@ export async function executeCompose(input: {
   }
 }
 
-/**
- * 网关推理（Gateway）：按写信配方实喂 Bundle，选定≡注入，调主模型并记账。
- * 真正「记录注入」在这一步的 ActionRecord.premiseKeys。
- */
-export async function executeInfer(input: {
-  candidate: CircleCandidate
-  question: string
-  /** Prior path markers / conclusions for compact reflux (少带原文) */
-  refluxPremise?: {
-    conclusion: string
-    pathSummary: string
-    fromKey: string
-  }
-  /** Soft-cap excerpt when reflux is present */
-  preferCompactExcerpt?: boolean
-}): Promise<GatewayInferResult> {
-  const question = input.question.trim()
-  const { R } = input.candidate
-  let excerpt = input.candidate.excerpt
-  if (input.preferCompactExcerpt && input.refluxPremise) {
-    // Keep lock identity grounded, but shrink raw dump when markers exist
-    excerpt =
-      excerpt.length > 480
-        ? `${excerpt.slice(0, 480)}…`
-        : excerpt
-  }
-  const premiseKeys =
-    input.candidate.R.memberKeys && input.candidate.R.memberKeys.length > 0
-      ? input.candidate.R.memberKeys
-      : [R.key]
-
-  let bundle: InstructionBundle
-  try {
-    bundle = buildInferBundle({
-      R,
-      sourceExcerpt: excerpt,
-      question,
-      forbid: [],
-      premise: input.refluxPremise,
-    })
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    const action: ActionRecord = {
-      actionId: newActionId('infer'),
-      actionKind: 'infer',
-      premiseKeys,
-      inputsRef: { question, excerpt, lockKey: R.key, role: 'gateway' },
-      outputsRef: { error: msg, roleNote: FANOUT_ROLE_NOTE.gateway },
-      createdAt: Date.now(),
-    }
-    return { action, direction: null, bundle: null, ok: false, error: msg }
-  }
-
-  const bundleMembers =
-    bundle.R.memberKeys && bundle.R.memberKeys.length > 0
-      ? bundle.R.memberKeys
-      : [bundle.R.key]
-  const sameMembers =
-    premiseKeys.length === bundleMembers.length &&
-    [...premiseKeys].sort().join('\0') === [...bundleMembers].sort().join('\0')
-  if (!sameMembers || bundle.sourceExcerpt !== excerpt) {
-    const msg = '选定≡注入校验失败：premise 与 Bundle 实喂不一致'
-    const action: ActionRecord = {
-      actionId: newActionId('infer'),
-      actionKind: 'infer',
-      premiseKeys,
-      inputsRef: { question, excerpt, lockKey: R.key, role: 'gateway' },
-      outputsRef: { error: msg, roleNote: FANOUT_ROLE_NOTE.gateway },
-      createdAt: Date.now(),
-    }
-    return { action, direction: null, bundle, ok: false, error: msg }
-  }
-
-  const llm = await callLlmWithBundle(bundle)
-  const action: ActionRecord = {
-    actionId: newActionId('infer'),
-    actionKind: 'infer',
-    premiseKeys,
-    inputsRef: { question, excerpt, lockKey: R.key, role: 'gateway' },
-    outputsRef: llm.ok
-      ? {
-          path: llm.path,
-          conclusion: llm.conclusion,
-          roleNote: FANOUT_ROLE_NOTE.gateway,
-        }
-      : { error: llm.error || '推理失败', roleNote: FANOUT_ROLE_NOTE.gateway },
-    createdAt: Date.now(),
-  }
-
-  if (!llm.ok) {
-    return {
-      action,
-      direction: null,
-      bundle,
-      ok: false,
-      error: llm.error || '推理失败',
-    }
-  }
-
-  const direction: DirectionRecord = {
-    directionId: `dir_${action.actionId}`,
-    questionText: question,
-    probe: textToProbe(question),
-    path: llm.path,
-    conclusion: llm.conclusion,
-    createdAt: Date.now(),
-    variants: [],
-    premiseKeys,
-    actionIds: [action.actionId],
-    accepted: undefined,
-  }
-
-  return { action, direction, bundle, ok: true }
-}
-
 interface InferOpsWireResponse {
   ok?: boolean
   usedMock?: boolean
@@ -385,7 +265,7 @@ export async function executeInferOps(input: {
       },
       createdAt: Date.now(),
     }
-    return { action, direction: null, bundle: null, ok: false, error: '编译后 blocks 为空', formalPath: null }
+    return { action, direction: null, ok: false, error: '编译后 blocks 为空', formalPath: null }
   }
 
   let data: InferOpsWireResponse | null = null
@@ -429,7 +309,7 @@ export async function executeInferOps(input: {
       outputsRef: { error: err, roleNote: `${FANOUT_ROLE_NOTE.gateway} · infer-ops` },
       createdAt: Date.now(),
     }
-    return { action, direction: null, bundle: null, ok: false, error: err, formalPath: null }
+    return { action, direction: null, ok: false, error: err, formalPath: null }
   }
 
   const rawForValidate = {
@@ -474,7 +354,6 @@ export async function executeInferOps(input: {
     return {
       action,
       direction: null,
-      bundle: null,
       ok: false,
       error: validated.message,
       formalPath: validated.path,
@@ -497,7 +376,7 @@ export async function executeInferOps(input: {
     accepted: undefined,
   }
 
-  return { action, direction, bundle: null, ok: true, formalPath: fp }
+  return { action, direction, ok: true, formalPath: fp }
 }
 
 /** Sorted member_keys fingerprint — same combo ⇒ same identity for reuse. */
@@ -572,6 +451,6 @@ export function executeReuse(input: {
     accepted: undefined,
   }
 
-  return { action, direction, bundle: null, ok: true }
+  return { action, direction, ok: true }
 }
 

@@ -10,7 +10,6 @@ import { EmphasisStarMap } from './ui/EmphasisStarMap'
 import { ReasoningPilotPanel } from './ui/ReasoningPilotPanel'
 import { ReasoningFloorDock } from './ui/ReasoningFloorDock'
 import { FanoutHud } from './ui/FanoutHud'
-import { GatewayFormalizeAbPanel } from './ui/GatewayFormalizeAbPanel'
 import './App.css'
 
 /**
@@ -26,7 +25,6 @@ export default function App() {
       </main>
       <HUD />
       <FanoutHud />
-      <GatewayFormalizeAbPanel />
       <ReasoningPilotPanel />
       <ReasoningFloorDock />
       <EmphasisStarMap />

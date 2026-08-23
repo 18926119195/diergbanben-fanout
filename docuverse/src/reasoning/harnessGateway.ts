@@ -20,7 +20,7 @@ import {
   compilerBlocksToAbBlocks,
 } from './harnessCompiler'
 import { executeInferOps } from './toolGateway'
-import { blocksFromInferUnit } from './abCompareRunner'
+import { blocksFromInferUnit } from './inferBlocks'
 import { unitMemberKeysOf } from './letterDesk'
 import { FANOUT_ROLE_NOTE } from './fanoutRoles'
 

@@ -19,7 +19,7 @@ import {
   compileHarnessProjection,
   compilerBlocksToAbBlocks,
 } from './harnessCompiler'
-import { blocksFromInferUnit } from './abCompareRunner'
+import { blocksFromInferUnit } from './inferBlocks'
 import { unitMemberKeysOf } from './letterDesk'
 import { applyFaultIn } from './workingSet'
 
@@ -102,7 +102,6 @@ async function inferOnce(input: {
       result: {
         action,
         direction: null,
-        bundle: null,
         ok: false,
         error: '编译 blocks 为空',
         formalPath: null,

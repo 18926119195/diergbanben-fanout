@@ -326,7 +326,6 @@ async function inferUnitViaHarness(input: {
       result: {
         action,
         direction: null,
-        bundle: null,
         ok: false,
         error: '双闸未批准',
         formalPath: null,
@@ -364,7 +363,6 @@ async function inferUnitViaHarness(input: {
         result: {
           action,
           direction: null,
-          bundle: null,
           ok: false,
           error: err,
           formalPath: null,
