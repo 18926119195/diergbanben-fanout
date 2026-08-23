@@ -85,6 +85,7 @@ export type { LineageNode } from './lineage'
 export {
   executeCompose,
   executeInfer,
+  executeInferOps,
   executeRetrieve,
   executeReuse,
   memberKeysSignature,
@@ -136,7 +137,11 @@ export {
   registerInferPaths,
   extractFormalOps,
 } from './harnessContext'
-export { compileHarnessProjection } from './harnessCompiler'
+export {
+  compileHarnessProjection,
+  compilerBlocksToAbBlocks,
+  augmentQuestionWithMarkers,
+} from './harnessCompiler'
 export {
   buildMotionPlans,
   probeScope,

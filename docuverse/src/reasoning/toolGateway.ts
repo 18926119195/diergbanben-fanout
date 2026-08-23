@@ -14,6 +14,9 @@ import {
 } from './composePolicy'
 import { FANOUT_ROLE_NOTE } from './fanoutRoles'
 import { callLlmWithBundle } from './llmClient'
+import { demoAuthHeaders } from './demoAuth'
+import type { AbBlock, FormalPathV1 } from './formalPath'
+import { validateFormalPath } from './formalValidator'
 import { textToProbe } from './lexicalProbe'
 import type { BookIndex, CircleCandidate } from './pipelineA'
 import { resolveVqToCandidates } from './pipelineA'
@@ -313,6 +316,156 @@ export async function executeInfer(input: {
   return { action, direction, bundle, ok: true }
 }
 
+interface InferOpsWireResponse {
+  ok?: boolean
+  usedMock?: boolean
+  conclusion?: string
+  path?: string
+  usedKeys?: string[]
+  ops?: unknown[]
+  error?: string
+}
+
+/**
+ * 网关 infer-ops：编译器 blocks → /api/protocol/infer-ops → Validator → formalOps 写回。
+ */
+export async function executeInferOps(input: {
+  question: string
+  blocks: AbBlock[]
+  unitLabel?: string
+  premiseKeys: string[]
+}): Promise<GatewayInferResult & { formalPath: FormalPathV1 | null }> {
+  const question = input.question.trim()
+  const premiseKeys = input.premiseKeys.filter(Boolean)
+  const blocks = input.blocks.filter((b) => b.key && b.text.trim())
+
+  if (blocks.length === 0) {
+    const action: ActionRecord = {
+      actionId: newActionId('infer'),
+      actionKind: 'infer',
+      premiseKeys,
+      inputsRef: { question, role: 'gateway' },
+      outputsRef: {
+        error: '编译后 blocks 为空',
+        roleNote: `${FANOUT_ROLE_NOTE.gateway} · infer-ops`,
+      },
+      createdAt: Date.now(),
+    }
+    return { action, direction: null, bundle: null, ok: false, error: '编译后 blocks 为空', formalPath: null }
+  }
+
+  let data: InferOpsWireResponse | null = null
+  let fetchError: string | undefined
+
+  try {
+    const res = await fetch('/api/protocol/infer-ops', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...demoAuthHeaders(),
+      },
+      body: JSON.stringify({
+        question,
+        blocks,
+        unitLabel: input.unitLabel,
+      }),
+    })
+    data = (await res.json().catch(() => null)) as InferOpsWireResponse | null
+    if (!res.ok) {
+      fetchError =
+        data && typeof data.error === 'string'
+          ? data.error
+          : `HTTP ${res.status}`
+    }
+  } catch (e) {
+    fetchError = e instanceof Error ? e.message : String(e)
+  }
+
+  if (fetchError || !data || data.ok === false) {
+    const err = fetchError ?? data?.error ?? 'infer-ops 失败'
+    const action: ActionRecord = {
+      actionId: newActionId('infer'),
+      actionKind: 'infer',
+      premiseKeys,
+      inputsRef: {
+        question,
+        excerpt: blocks.map((b) => b.key).join(', '),
+        role: 'gateway',
+      },
+      outputsRef: { error: err, roleNote: `${FANOUT_ROLE_NOTE.gateway} · infer-ops` },
+      createdAt: Date.now(),
+    }
+    return { action, direction: null, bundle: null, ok: false, error: err, formalPath: null }
+  }
+
+  const rawForValidate = {
+    conclusion: data.conclusion ?? '',
+    formalConclusion: data.conclusion ?? '',
+    path: data.path ?? '',
+    usedKeys: data.usedKeys ?? [],
+    ops: data.ops ?? [],
+  }
+
+  const validated = validateFormalPath({
+    blocks,
+    raw: rawForValidate,
+    premiseKeys,
+  })
+
+  const action: ActionRecord = {
+    actionId: newActionId('infer'),
+    actionKind: 'infer',
+    premiseKeys,
+    inputsRef: {
+      question,
+      excerpt: blocks.map((b) => `${b.key}:${b.text.slice(0, 48)}`).join(' | '),
+      role: 'gateway',
+    },
+    outputsRef: validated.ok
+      ? {
+          path: validated.path.path ?? data.path,
+          conclusion: validated.path.formalConclusion,
+          roleNote: `${FANOUT_ROLE_NOTE.gateway} · infer-ops · Validator ACCEPT`,
+        }
+      : {
+          error: validated.message,
+          path: data.path,
+          conclusion: data.conclusion,
+          roleNote: `${FANOUT_ROLE_NOTE.gateway} · infer-ops · ${validated.message}`,
+        },
+    createdAt: Date.now(),
+  }
+
+  if (!validated.ok) {
+    return {
+      action,
+      direction: null,
+      bundle: null,
+      ok: false,
+      error: validated.message,
+      formalPath: validated.path,
+    }
+  }
+
+  const fp = validated.path
+  const direction: DirectionRecord = {
+    directionId: `dir_${action.actionId}`,
+    questionText: question,
+    probe: textToProbe(question),
+    path: fp.path ?? data.path ?? '',
+    conclusion: fp.formalConclusion,
+    createdAt: Date.now(),
+    variants: [],
+    premiseKeys,
+    actionIds: [action.actionId],
+    formalOps: [...fp.ops],
+    formalPath: fp,
+    accepted: undefined,
+  }
+
+  return { action, direction, bundle: null, ok: true, formalPath: fp }
+}
+
 /** Sorted member_keys fingerprint — same combo ⇒ same identity for reuse. */
 export function memberKeysSignature(keys: string[]): string {
   return [...keys].filter(Boolean).sort().join('\0')
@@ -374,6 +527,14 @@ export function executeReuse(input: {
     variants,
     premiseKeys,
     actionIds: [action.actionId],
+    formalOps: prev.formalOps ? [...prev.formalOps] : undefined,
+    formalPath: prev.formalPath,
+    referencedPathIds: [
+      input.fromPath.pathId,
+      ...(prev.referencedPathIds ?? []),
+    ],
+    pathMarker: prev.pathMarker,
+    fingerprint: prev.fingerprint,
     accepted: undefined,
   }
 

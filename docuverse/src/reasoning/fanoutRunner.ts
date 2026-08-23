@@ -7,6 +7,7 @@
 import {
   executeCompose,
   executeInfer,
+  executeInferOps,
   executeRetrieve,
   executeReuse,
 } from './toolGateway'
@@ -35,11 +36,18 @@ import type { BookIndex, CircleCandidate } from './pipelineA'
 import type { ActionRecord, FanoutPath } from './types'
 import type {
   ForbidPatternEntry,
+  HarnessContext,
   MotionPlan,
   WorkingSetState,
 } from './harnessTypes'
 import { buildMotionPlans } from './motionBrain'
 import { pathToMemoryEntry } from './harnessContext'
+import { blocksFromInferUnit } from './abCompareRunner'
+import {
+  augmentQuestionWithMarkers,
+  compileHarnessProjection,
+  compilerBlocksToAbBlocks,
+} from './harnessCompiler'
 
 function ringAngle(strandIndex: number, total: number): number {
   const n = Math.max(total, 1)
@@ -183,6 +191,92 @@ export function buildMotionPlansForDesk(input: {
     expandBudget: input.expandBudget,
     maxKeysPerPlan: 8,
     forbidPatterns: input.forbidPatterns,
+  })
+}
+
+function defaultExpandPlan(unit: FanoutInferUnit): MotionPlan {
+  const memberKeys = unitMemberKeysOf(unit)
+  return {
+    rank: 1,
+    planId: `expand_${unit.candidate.R.key.slice(0, 16)}`,
+    action: 'expand',
+    faultInKeys: memberKeys,
+    collapseKeys: [],
+    unitKey: unit.candidate.R.key,
+    score: 0.6,
+    rationale: '默认 expand · 全开 memberKeys',
+  }
+}
+
+function resolvePlanForUnit(
+  unit: FanoutInferUnit,
+  plans: ReadonlyArray<MotionPlan>,
+): MotionPlan {
+  const hit = plans.find((p) => p.unitKey === unit.candidate.R.key)
+  return hit ?? defaultExpandPlan(unit)
+}
+
+async function inferUnitViaHarness(input: {
+  unit: FanoutInferUnit
+  question: string
+  bookIndex: BookIndex
+  ctx: HarnessContext
+  plan: MotionPlan
+}): Promise<Awaited<ReturnType<typeof executeInferOps>> | Awaited<ReturnType<typeof executeInfer>>> {
+  const memberKeys = unitMemberKeysOf(input.unit)
+  const compiled = compileHarnessProjection({
+    ctx: input.ctx,
+    bookIndex: input.bookIndex,
+    plan: input.plan,
+    memberKeys,
+  })
+
+  let abBlocks = compilerBlocksToAbBlocks(compiled.blocks)
+  if (abBlocks.length === 0) {
+    abBlocks = blocksFromInferUnit(input.unit, input.bookIndex)
+  }
+
+  if (abBlocks.length === 0) {
+    return executeInfer({
+      candidate: input.unit.candidate,
+      question: input.question,
+      refluxPremise: compiled.refluxPremise[0]
+        ? {
+            conclusion: compiled.refluxPremise[0].conclusion,
+            pathSummary: compiled.refluxPremise[0].pathSummary,
+            fromKey: compiled.refluxPremise[0].fromKey,
+          }
+        : undefined,
+      preferCompactExcerpt: compiled.refluxPremise.length > 0,
+    })
+  }
+
+  const augmentedQuestion = augmentQuestionWithMarkers({
+    question: input.question,
+    pathMarkers: compiled.pathMarkers,
+    refluxPremise: compiled.refluxPremise,
+  })
+
+  const opsResult = await executeInferOps({
+    question: augmentedQuestion,
+    blocks: abBlocks,
+    unitLabel: input.unit.label,
+    premiseKeys: memberKeys,
+  })
+
+  if (opsResult.ok) return opsResult
+
+  return executeInfer({
+    candidate: input.unit.candidate,
+    question: input.question,
+    refluxPremise: compiled.refluxPremise[0]
+      ? {
+          conclusion: compiled.refluxPremise[0].conclusion,
+          pathSummary: compiled.refluxPremise[0].pathSummary,
+          fromKey: compiled.refluxPremise[0].fromKey,
+        }
+      : undefined,
+    preferCompactExcerpt: compiled.refluxPremise.length > 0,
   })
 }
 
@@ -606,7 +700,13 @@ export async function rebuildLetterDeskWithLock(
  */
 export async function executeLetterDesk(
   session: LetterDeskSession,
-  options: { onProgress?: (msg: string) => void } = {},
+  options: {
+    onProgress?: (msg: string) => void
+    harness?: {
+      ctx: HarnessContext
+      motionPlans?: ReadonlyArray<MotionPlan>
+    }
+  } = {},
 ): Promise<FanoutRunResult & { returnToDesk?: boolean }> {
   const {
     question: q,
@@ -671,7 +771,7 @@ export async function executeLetterDesk(
     toReuse.length + toInfer.length > 0
       ? `网关·新推 ${toInfer.length} · 复用 ${toReuse.length} · 跳过尚未展开 ${deferredArchive.length}${
           refluxPremise ? ' · 带路径标记回流' : ''
-        }`
+        }${options.harness ? ' · 编译器→infer-ops' : ''}`
       : `网关·本轮无执行单元（${deferredArchive.length} 条尚未展开已存档）`,
   )
 
@@ -700,16 +800,31 @@ export async function executeLetterDesk(
     }
   }
 
+  const motionPlans = options.harness?.motionPlans ?? []
+  const harnessCtx = options.harness?.ctx
+
   const inferResults = await mapPool(
     toInfer,
     concurrency,
     async ({ unit, index }) => {
-      const result = await executeInfer({
-        candidate: unit.candidate,
-        question: q,
-        refluxPremise,
-        preferCompactExcerpt: Boolean(refluxPremise),
-      })
+      const result =
+        harnessCtx != null
+          ? await inferUnitViaHarness({
+              unit,
+              question: q,
+              bookIndex,
+              ctx: {
+                ...harnessCtx,
+                working: { ...harnessCtx.working, question: q },
+              },
+              plan: resolvePlanForUnit(unit, motionPlans),
+            })
+          : await executeInfer({
+              candidate: unit.candidate,
+              question: q,
+              refluxPremise,
+              preferCompactExcerpt: Boolean(refluxPremise),
+            })
       return {
         result,
         index,
@@ -773,6 +888,9 @@ export async function executeLetterDesk(
       pathMarker,
       fingerprint,
       cacheTier: 'inferred' as const,
+      formalOps: result.direction.formalOps,
+      formalPath: result.direction.formalPath,
+      referencedPathIds: reusedFromPathId ? [reusedFromPathId] : undefined,
     }
 
     const last = actions[actions.length - 1]

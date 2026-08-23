@@ -3,6 +3,7 @@
  */
 
 import type { BookIndex } from './pipelineA'
+import type { AbBlock } from './formalPath'
 import type {
   CompilerBlock,
   HarnessCompileResult,
@@ -110,4 +111,49 @@ export function compileHistoricalPointersOnly(ctx: HarnessContext): string[] {
     ...ctx.working.currentMemory.map((e) => e.path.direction.pathMarker ?? ''),
     ...ctx.historical.archivePaths.map((e) => e.path.direction.pathMarker ?? ''),
   ].filter(Boolean)
+}
+
+/** Convert compiler blocks → infer-ops AbBlock[] */
+export function compilerBlocksToAbBlocks(
+  blocks: ReadonlyArray<CompilerBlock>,
+): AbBlock[] {
+  return blocks.map((b) => ({
+    key: b.key,
+    text: b.text,
+    page: b.page,
+    shortHandle: b.shortHandle,
+  }))
+}
+
+/** Append settled pathMarkers to question for compact reflux context */
+export function augmentQuestionWithMarkers(input: {
+  question: string
+  pathMarkers: ReadonlyArray<string>
+  refluxPremise?: ReadonlyArray<{
+    conclusion: string
+    pathSummary: string
+    fromKey: string
+  }>
+}): string {
+  const parts = [input.question.trim()]
+  const markers = input.pathMarkers.filter(Boolean)
+  if (markers.length > 0) {
+    parts.push(
+      '【已结算 pathMarker · 只认号不展开 T】',
+      markers.join('\n---\n'),
+    )
+  }
+  const reflux = input.refluxPremise ?? []
+  if (reflux.length > 0) {
+    parts.push(
+      '【回流前提】',
+      reflux
+        .map(
+          (r) =>
+            `from ${r.fromKey}: ${r.conclusion.slice(0, 120)} | ${r.pathSummary.slice(0, 80)}`,
+        )
+        .join('\n'),
+    )
+  }
+  return parts.join('\n')
 }

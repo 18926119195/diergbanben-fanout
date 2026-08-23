@@ -306,10 +306,15 @@ export function FanoutHud() {
       return
     }
     setError(null)
-    setPhase('inferring', '网关·按定案执行…')
+    setPhase('inferring', '网关·编译器→infer-ops 执行…')
     try {
+      const fanoutState = useFanout.getState()
       const result = await executeLetterDesk(session, {
         onProgress: (msg) => setPhase('inferring', msg),
+        harness: {
+          ctx: fanoutState.getHarnessContext(),
+          motionPlans: fanoutState.lastMotionPlans,
+        },
       })
       const baseIds = new Set([
         session.retrieveAction.actionId,
