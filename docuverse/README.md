@@ -9,15 +9,28 @@
 
 GLM-5V-Turbo 附图规格：`../patent-ocr/glm-frontend-spec.md`、`glm-data-spec.md`
 
-## 运行
+## 本机运行（推荐自测）
 
 ```bash
-cd docuverse
+git clone https://github.com/18926119195/diergbanben-fanout.git
+cd diergbanben-fanout/docuverse
 npm install
 npm run dev
 ```
 
-打开 http://127.0.0.1:5173/
+在本机浏览器打开 http://127.0.0.1:5173/（**不是** Cloud Agent Preview）。
+
+一键脚本：`./scripts/setup-local.sh`（Windows：`.\scripts\setup-local.ps1`）
+
+完整说明：[../docs/LOCAL_SETUP.md](../docs/LOCAL_SETUP.md)
+
+### 扇出试点快速测
+
+1. 上传扫描 PDF（不勾选「有文字层」）→ 等索引就绪  
+2. 右侧扇出 HUD 提问 → 打开写信台 → 确认执行  
+3. 查看多路径、formalOps、双闸、采纳/reuse  
+
+设计文档：`../docs/扇出改造-设计共识与接续手册.md`
 
 ## 专利导航键（CVS）
 
