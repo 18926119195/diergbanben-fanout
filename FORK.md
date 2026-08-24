@@ -9,7 +9,7 @@
 ## 已落地（相对原库）
 
 - Docuverse **大球面排页 → 扑克绕圈**（书序）
-- 工具网关 `retrieve` / `infer` + `ActionRecord` 存档
+- 工具网关 `retrieve` / `infer-ops` + `ActionRecord` 存档
 - 扇出 runner + 右侧 HUD（提问 / 路径切换 / 采纳 / 步骤）
 - 场景内 **箭头层**：前提页 → 分色步骤珠 → 结论端
 
