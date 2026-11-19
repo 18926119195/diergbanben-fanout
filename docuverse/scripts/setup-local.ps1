@@ -7,7 +7,7 @@ Write-Host "==> docuverse 本机部署"
 Write-Host "    目录: $Root"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Write-Error "未找到 node，请先安装 Node.js 18+"
+  Write-Error "未找到 node，请先安装 Node.js 22.13+"
 }
 
 Write-Host "==> Node $(node -v)"

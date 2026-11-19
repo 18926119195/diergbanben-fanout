@@ -2,19 +2,17 @@
  * Server-only env (Vercel Environment Variables / local process.env).
  * Never expose these via VITE_*.
  *
- * Temporary lock: SiliconFlow chat + embed credentials/models are baked in
- * and not overridable by process.env or the browser.
+ * The default upstream and chat/embedding model IDs are fixed. Provider
+ * credentials come from server environment variables.
  */
 
 declare const process: { env: Record<string, string | undefined> }
 
-/** Locked stack — temporarily fixed; do not swap via UI / env. */
-const LOCKED_DEMO = {
-  llmApiKey: 'sk-qyrpejglpxmjfqxsbcmyjxbgbcfrknfbbwnquycbnhjufaff',
+/** Fixed provider endpoint and model IDs. */
+const LOCKED_UPSTREAM = {
   llmBaseUrl: 'https://api.siliconflow.cn/v1',
   chatModel: 'deepseek-ai/DeepSeek-V4-Flash',
   embedModel: 'Qwen/Qwen3-VL-Embedding-8B',
-  zhipuApiKey: 'ee855f9fa6344a728c5fdcd9b0c4d79d.Gu5bzsn8XtTgLzmM',
   ocrModel: 'glm-ocr',
 } as const
 
@@ -24,14 +22,14 @@ export function serverEnv(name: string): string {
 }
 
 export function zhipuApiKey(): string {
-  return serverEnv('ZHIPU_API_KEY') || LOCKED_DEMO.zhipuApiKey
+  return serverEnv('ZHIPU_API_KEY')
 }
 
 export function zhipuOcrModel(): string {
-  return serverEnv('OCR_MODEL') || LOCKED_DEMO.ocrModel
+  return serverEnv('OCR_MODEL') || LOCKED_UPSTREAM.ocrModel
 }
 
-/** SiliconFlow upstream for chat + embeddings (models + key locked). */
+/** SiliconFlow upstream for chat and embeddings. */
 export function llmUpstream(): {
   baseUrl: string
   apiKey: string
@@ -39,10 +37,10 @@ export function llmUpstream(): {
   embedModel: string
 } {
   return {
-    baseUrl: LOCKED_DEMO.llmBaseUrl,
-    apiKey: LOCKED_DEMO.llmApiKey,
-    chatModel: LOCKED_DEMO.chatModel,
-    embedModel: LOCKED_DEMO.embedModel,
+    baseUrl: LOCKED_UPSTREAM.llmBaseUrl,
+    apiKey: serverEnv('LLM_API_KEY'),
+    chatModel: LOCKED_UPSTREAM.chatModel,
+    embedModel: LOCKED_UPSTREAM.embedModel,
   }
 }
 

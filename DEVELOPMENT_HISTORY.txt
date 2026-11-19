@@ -1,0 +1,119 @@
+diergbanben-fanout｜开发时间线
+历史主分支 b5495d32fd083acae9f239e694e7a585723911d0
+整理分支核验点 616922168d46dddd9d12976fb761956f52f28846
+日期使用北京时间，表示 Git 提交作者时间。聊天原件没有逐轮时间。本文用原件的行号定位发言、引文和用户贴回的界面。
+
+查阅编号
+01 旁路快照、导入和写信台
+02 MotionPlan 与采纳记忆
+03 编译、infer-ops 与 formalOps
+04 页级索引、双闸和微循环
+05 移除扇出对照组、本机入口
+06 聊天原件和维护导航
+07 维护修订与复跑证据
+08 当前入口
+09 待验证的设计讨论
+
+01｜2026-08-23 13:09:50｜旁路快照、导入和写信台
+  初始快照已经包含 PDF 导入、写信台准备和执行。后续的提交在这条旁路链上加入运动计划、编译和审批。
+  https://github.com/18926119195/diergbanben-fanout/commit/9a94415ea976c2eb3b9afff334456bf84fc65bc0
+  https://github.com/18926119195/diergbanben-fanout/blob/9a94415ea976c2eb3b9afff334456bf84fc65bc0/docuverse/src/data/pdfImport.ts#L47
+  https://github.com/18926119195/diergbanben-fanout/blob/9a94415ea976c2eb3b9afff334456bf84fc65bc0/docuverse/src/reasoning/fanoutRunner.ts#L228
+  https://github.com/18926119195/diergbanben-fanout/blob/9a94415ea976c2eb3b9afff334456bf84fc65bc0/docuverse/src/reasoning/fanoutRunner.ts#L543
+
+02｜2026-08-23 16:16:13｜MotionPlan 与采纳记忆
+  规则型运动脑根据候选袋、工作集、复用和预算生成计划。采纳路径进入 settled，并按 current/archive 存放。拒绝路径走拒绝处理。
+  https://github.com/18926119195/diergbanben-fanout/commit/c5ac97c93d648d318a700bd9c6ecc210945b4c75
+  https://github.com/18926119195/diergbanben-fanout/blob/c5ac97c93d648d318a700bd9c6ecc210945b4c75/docuverse/src/reasoning/motionBrain.ts#L63
+  https://github.com/18926119195/diergbanben-fanout/blob/c5ac97c93d648d318a700bd9c6ecc210945b4c75/docuverse/src/reasoning/harnessContext.ts#L149
+  https://github.com/18926119195/diergbanben-fanout/blob/c5ac97c93d648d318a700bd9c6ecc210945b4c75/docuverse/src/reasoning/harnessContext.ts#L226
+  用户消息 · L4344 「对象钉死 → 工具推荐 → 写信台三态 → 网关」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L4344
+
+03｜2026-08-23 16:19:12｜编译、infer-ops 与 formalOps
+  编译器由 HarnessContext 和 MotionPlan 投影文本块。扇出调用 infer-ops，验证结构与 key 范围，将 formalOps 写入方向记录。
+  https://github.com/18926119195/diergbanben-fanout/commit/f8b4912a870ee1d2b597324553318d53ae576666
+  https://github.com/18926119195/diergbanben-fanout/blob/f8b4912a870ee1d2b597324553318d53ae576666/docuverse/src/reasoning/harnessCompiler.ts#L30
+  https://github.com/18926119195/diergbanben-fanout/blob/f8b4912a870ee1d2b597324553318d53ae576666/docuverse/api/protocol/infer-ops.ts#L13
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/docuverse/src/reasoning/toolGateway.ts#L323
+  用户消息 · L4728 「本轮推理路径 · 14」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L4728
+
+04｜2026-08-23 16:22:53｜页级索引、双闸和微循环
+  语义索引建立每页一节的标题、短摘要和槽归属。检索在全书 Top-K 之后做相交过滤。双闸按候选 key 存在性 probe 并接收人工审批。微循环为部分执行分支提供重试，增量检索仍有边界。
+  https://github.com/18926119195/diergbanben-fanout/commit/4e916de0cc9e54f3db969b9f0aff412b12508a0e
+  https://github.com/18926119195/diergbanben-fanout/blob/4e916de0cc9e54f3db969b9f0aff412b12508a0e/docuverse/src/reasoning/semanticIndex.ts#L62
+  https://github.com/18926119195/diergbanben-fanout/blob/4e916de0cc9e54f3db969b9f0aff412b12508a0e/docuverse/src/reasoning/harnessGateway.ts#L69
+  https://github.com/18926119195/diergbanben-fanout/blob/4e916de0cc9e54f3db969b9f0aff412b12508a0e/docuverse/src/reasoning/microLoop.ts#L133
+  用户消息 · L2856 「双闸 · probe→人批→网关 · 3 条 · 待人批」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L2856
+  用户消息 · L2859 「faultIn probe: 1/1 keys in BookIndex」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L2859
+  用户消息 · L3240 「Top1 分差不足 · 料 5/858」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L3240
+
+05｜2026-08-23 16:28:09 至 17:05:34｜移除扇出对照组、本机入口
+  删除扇出 classic 对照 runner 和 UI，扇出调用统一至 infer-ops。独立 classic API 保留。随后加入本地运行指南及脚本。HUD 将 DSH 显示为未桥接。
+  https://github.com/18926119195/diergbanben-fanout/commit/534af6b7950cbff2084cf48eb62733b351291175
+  https://github.com/18926119195/diergbanben-fanout/commit/d2eb2dfa56b21087670994fa8ea0a50cf49dd34c
+  https://github.com/18926119195/diergbanben-fanout/blob/d2eb2dfa56b21087670994fa8ea0a50cf49dd34c/docuverse/scripts/setup-local.sh
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/docuverse/api/protocol/infer.ts
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/docuverse/src/ui/FanoutHud.tsx#L477
+  用户消息 · L4355 「对话事件锚（DSH）尚未桥接 · 本轮测书侧 PDF。」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L4355
+
+06｜2026-08-24 13:49:58 至 2026-11-19 12:04:58｜聊天原件和维护导航
+  b203ac14-2086-4180-b3fe-f60d68567293 的本地聊天导出作为 chat history 入库。另一段 Cursor 云端聊天在当前材料中缺少完整导出。2026-11-19 的 main 提交补根导航与现状入口，应用代码与八月末公开基准相同。
+  原件共 13436 行，290390 字节。仓库初始与归档路径的 Git blob 均为 7ada8712a0bf312033f76e4484ec24a013e9e7d1。
+  https://github.com/18926119195/diergbanben-fanout/commit/716939b9be634b2e4b53ab5644ef70942a5e20a4
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L5
+  https://github.com/18926119195/diergbanben-fanout/commit/b5495d32fd083acae9f239e694e7a585723911d0
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docs/chat-archive/fanout-chat-history.txt#L5
+
+07｜2026-11-19 14:07:50 至 15:43:18｜维护修订与复跑证据
+  修复微循环到达上限后的额外请求。清理前全失败测试默认调用 4 次，计划只登记 3 条。修订后默认 3 次、零重试 1 次，调用与计划数量一致。Vite 和 API 改为从服务端环境读取供应商密钥。后续整理补充维护导航、旧路径索引和聊天归档，图标入口恢复到 public/favicon.svg。
+  Node 24.22.1 下锁文件安装、lint（14 条已有警告）、build、Mock infer-ops 均通过。真实 OCR、embedding 与模型推理未复跑。合成检索保留全书 3 槽的池，页命中时 Top-K=1 因无交集返回页外候选，Top-K=2 得到页内候选。这证实当前顺序。
+  https://github.com/18926119195/diergbanben-fanout/commit/98f4c6e483537e54e8c5b99bbe4a9053a3d10c12
+  https://github.com/18926119195/diergbanben-fanout/blob/98f4c6e483537e54e8c5b99bbe4a9053a3d10c12/docuverse/src/reasoning/microLoop.ts#L175
+  https://github.com/18926119195/diergbanben-fanout/blob/98f4c6e483537e54e8c5b99bbe4a9053a3d10c12/docuverse/api/_lib/env.ts#L32
+  https://github.com/18926119195/diergbanben-fanout/commit/616922168d46dddd9d12976fb761956f52f28846
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docs/archive/PATHS.txt#L1
+
+08｜当前入口
+  从 docuverse/ 运行。PDF 面板完成 OCR 与索引，再从扇出 HUD 打开写信台。工具网关执行 retrieve，runner 生成计划和落地分支，编译器生成注入文本块，infer-ops 与 Validator 返回结构化结果。运行前使用 Node 22.13+，真实供应商调用读取服务端配置。
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/ui/PdfUploadPanel.tsx#L25
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/reasoning/indexGate.ts#L113
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/ui/FanoutHud.tsx#L198
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/reasoning/toolGateway.ts#L63
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/reasoning/fanoutRunner.ts#L821
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/reasoning/harnessCompiler.ts#L30
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/api/protocol/infer-ops.ts#L13
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/reasoning/formalValidator.ts#L148
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/package.json#L6-L11
+
+09｜待验证的设计讨论，按聊天原件顺序
+  A. 用户提出三态与运动脑的交互合并、逐袋逐 key 给理由。当前仍有独立双闸，运动脑的建议为规则生成。
+  用户消息 · L8317 「直接三态到具体的袋、key，配合运动脑」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L8317
+  用户消息 · L8908 「先让非常小的推理模型去先偷看这些key说了啥，然后再给出一些摘要」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L8908
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/ui/FanoutHud.tsx#L816
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/reasoning/motionBrain.ts#L63
+
+  B. 用户提出语义先定范围，再由向量检索。当前走全书槽评分、Top-K 后置页级过滤。
+  用户消息 · L10091 「根据语义表格来定范围然后再用向量来在这个范围里面进行top5key」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L10091
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/reasoning/pipelineA.ts#L920
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/reasoning/toolGateway.ts#L69
+
+  C. 用户提出 A1 与工具索引、LLM 上下文各自独立，并追问语义表由谁建立。当前 A1 槽仍带 vBook，运动脑输入未接书侧语义索引。
+  用户消息 · L12117 「我认为a1表应该需要更加干净，不用先向量表」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L12117
+  用户消息 · L12512 「然后我认为就是检索工具弄得一个表格，例如embedding和rerank是独立的表格索引回去槽所在的a1」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L12512
+  用户消息 · L12827 「a1表格是ocr的上下文、检索工具也自己生成自己的上下文，每个llm也生成自己的上下文」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L12827
+  用户消息 · L13339 「还是说要求这些上下文必须自己生成配合这个运动脑的“语义表”呢？」
+  https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L13339
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/reasoning/pipelineA.ts#L31
+  https://github.com/18926119195/diergbanben-fanout/blob/616922168d46dddd9d12976fb761956f52f28846/docuverse/src/reasoning/harnessTypes.ts#L144
