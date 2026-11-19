@@ -1,0 +1,25 @@
+diergbanben-fanout｜写信台、运动计划与 infer-ops 的旁路实验
+核验 Git 提交 b5495d32fd083acae9f239e694e7a585723911d0
+协作总导航 https://github.com/18926119195/docuverse/blob/codex/repository-cleanup/MAINTAINERS.txt
+
+这个库在开发什么
+应用在 docuverse/。正常入口先检索、分袋和组成写信台，再由规则型 MotionPlan 决定开窗和复用，经编译、门禁与验证进入 infer-ops。页级语义处理发生在全书候选排序和 Top-K 之后，交集为空可回退。A1 仍保存向量。
+
+首次阅读的代码入口
+FanoutHud.tsx → fanoutRunner.ts → motionBrain.ts / harnessCompiler.ts → inferOpsCore.ts。检索顺序从 toolGateway.ts 和 pipelineA.ts 检查。
+https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/docuverse/src/ui/FanoutHud.tsx#L198
+https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/docuverse/src/reasoning/fanoutRunner.ts#L501
+https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/docuverse/src/reasoning/motionBrain.ts#L63
+https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/docuverse/src/reasoning/toolGateway.ts#L63
+https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/docuverse/api/_lib/protocol/inferOpsCore.ts#L85
+
+相关聊天原件
+用户原文「我认为槽未必需要先向量的，也就是说我认为a1表应该需要更加干净，不用先向量表，而是就好像运动脑搭配语义表成为一个检索工具，而向量和rerank成为一个检索工具这样」
+https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L12117
+用户随后提出独立索引回指 A1，并继续问语义表由谁生成。
+https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L12512
+https://github.com/18926119195/diergbanben-fanout/blob/b5495d32fd083acae9f239e694e7a585723911d0/chat%20history#L13339
+
+维护边界和下次接续
+维持旁路。优先固定 Top-K 与范围过滤顺序的完整夹具，记录候选池、回退、模型调用次数和接受的 key。若做独立索引用单独实验分支，同一问题比较前置缩域和现有后置过滤。保留现有规则型 MotionPlan 作为对照。
+本文件只依据 Git 提交关系、可定位的聊天原件和源码。候选改动需要以正常入口及复跑证据验收。
