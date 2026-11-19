@@ -1,4 +1,6 @@
 diergbanben-fanout｜写信台、运动计划与 infer-ops 的旁路实验
+开发时间线（原话、实现提交、源码行号和验证）见同目录 DEVELOPMENT_HISTORY.txt。
+https://github.com/18926119195/diergbanben-fanout/blob/codex/repository-cleanup/DEVELOPMENT_HISTORY.txt
 核验 Git 提交 b5495d32fd083acae9f239e694e7a585723911d0
 协作总导航 https://github.com/18926119195/docuverse/blob/codex/repository-cleanup/MAINTAINERS.txt
 
