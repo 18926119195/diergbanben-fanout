@@ -123,8 +123,12 @@ export function viteProtocolApiPlugin(root: string, mode: string): Plugin {
         }
 
         try {
-          const raw = await readJsonBody(req)
           const upstream = llmUpstream()
+          if (!upstream.apiKey) {
+            json(res, 503, { error: 'LLM_API_KEY missing on server' })
+            return
+          }
+          const raw = await readJsonBody(req)
           const lockedModel = isEmbed ? upstream.embedModel : upstream.chatModel
           const body =
             typeof raw === 'object' && raw !== null

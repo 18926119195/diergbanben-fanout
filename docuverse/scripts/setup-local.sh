@@ -8,7 +8,7 @@ echo "==> docuverse 本机部署"
 echo "    目录: $ROOT"
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "错误: 未找到 node，请先安装 Node.js 18+"
+  echo "错误: 未找到 node，请先安装 Node.js 22.13+"
   exit 1
 fi
 

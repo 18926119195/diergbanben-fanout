@@ -40,7 +40,7 @@ PdfUploadPanel
 | PDF 导入与 OCR | 已实现 | `docuverse/src/data/pdfImport.ts`、`ocrService.ts` |
 | BookIndex 建库 | 已实现 | `pipelineA.ts`、`indexGate.ts` |
 | 语义节基础索引 | 部分实现 | `semanticIndex.ts`；按页建立节节点与槽出处，不是完整目录树 |
-| retrieve | 已实现 | `toolGateway.ts::executeRetrieve`；输出 draft 候选，不注入正文 |
+| retrieve | 已实现 | `pipelineA.ts::resolveVqToCandidates` 对书内可检索槽排名；`toolGateway.ts::executeRetrieve` 在 Top-K 候选上做页级后置过滤，无交集时保留原候选；输出 draftKeys |
 | compose | 已实现 | `toolGateway.ts::executeCompose`、`fanoutCompose.ts` |
 | 写信台三态 | 已实现 | `letterDesk.ts`、`fanoutRunner.ts` |
 | MotionPlan | 已实现规则型流程 | `motionBrain.ts`；不应称为完整 LLM 规划器 |
@@ -48,7 +48,7 @@ PdfUploadPanel
 | HarnessCompiler | 已实现基础版本 | `harnessCompiler.ts`；生成 blocks / AllowedKeys，不含完整章节树排版 |
 | infer-ops | 已实现主链出口 | `toolGateway.ts::executeInferOps`、`api/protocol/infer-ops.ts` |
 | FormalValidator | 已实现 | `formalValidator.ts`；结构检查，不是形式化数学证明 |
-| micro loop | 部分实现 | `microLoop.ts`；默认最多 2 次重试，不等于完整增量补料架构 |
+| micro loop | 部分实现 | `microLoop.ts`；默认初次调用加最多 2 次重试；`fanoutRunner.ts` 中部分动作使用独立执行分支 |
 | accept / reject | 已实现主要流程 | `harnessContext.ts`、`FanoutHud.tsx` |
 | reuse | 已实现主要流程 | `toolGateway.ts::executeReuse`、`toolArchive.ts` |
 | DSH | 未桥接 | `FanoutHud.tsx` 明确显示尚未桥接 |

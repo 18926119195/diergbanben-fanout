@@ -25,7 +25,7 @@
 ```text
 PDF / OCR
   -> BookIndex 与 slot key*
-  -> 节级检索与槽级 draftKeys
+  -> 全书槽级混合排序、Top-K 的页级过滤及 draftKeys
   -> ComposePolicy 候选推理袋
   -> 写信台 reuse / expand / deferred
   -> MotionPlan 与双闸批准

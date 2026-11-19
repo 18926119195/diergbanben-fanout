@@ -144,11 +144,8 @@ export async function inferWithMicroLoop(input: {
   const plansTried: MotionPlan[] = []
   let plan = input.initialPlan
   let ws = input.workingSet
-  let lastCodes: ValidateRejectCode[] = []
-  let loopCount = 0
 
-  for (let i = 0; i <= maxLoops; i++) {
-    loopCount = i
+  for (let loopCount = 0; ; loopCount++) {
     plansTried.push(plan)
     const { result, workingSet: nextWs } = await inferOnce({
       unit: input.unit,
@@ -159,16 +156,6 @@ export async function inferWithMicroLoop(input: {
       workingSet: ws,
     })
     ws = nextWs
-
-    if (result.ok && result.direction?.formalOps?.length) {
-      return {
-        result,
-        workingSet: ws,
-        plansTried,
-        loopCount,
-        lastValidatorCodes: [],
-      }
-    }
 
     if (result.ok && result.direction) {
       return {
@@ -181,11 +168,20 @@ export async function inferWithMicroLoop(input: {
     }
 
     const msg = result.error ?? 'Validator/infer 失败'
-    lastCodes = msg.includes('REJECT')
+    const lastCodes: ValidateRejectCode[] = msg.includes('REJECT')
       ? (msg.split(',').filter((c) => c.startsWith('REJECT_')) as ValidateRejectCode[])
       : ['REJECT_THIN_DERIVATION']
 
-    if (i >= maxLoops) break
+    const canRetry = loopCount + 1 <= maxLoops
+    if (!canRetry) {
+      return {
+        result,
+        workingSet: ws,
+        plansTried,
+        loopCount,
+        lastValidatorCodes: lastCodes,
+      }
+    }
 
     const trigger = validatorTrigger(lastCodes, msg)
     const nextPlans = buildMotionPlans({
@@ -205,22 +201,5 @@ export async function inferWithMicroLoop(input: {
     } else {
       plan = nextPartialPlan(plan, memberKeys, plan.faultInKeys.length + 1)
     }
-  }
-
-  const last = await inferOnce({
-    unit: input.unit,
-    question: input.question,
-    bookIndex: input.bookIndex,
-    ctx: input.ctx,
-    plan,
-    workingSet: ws,
-  })
-
-  return {
-    result: last.result,
-    workingSet: last.workingSet,
-    plansTried,
-    loopCount,
-    lastValidatorCodes: lastCodes,
   }
 }

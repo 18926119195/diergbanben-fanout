@@ -10,7 +10,7 @@
 
 | 项 | 要求 |
 |----|------|
-| Node.js | **18+**（推荐 20 LTS） |
+| Node.js | **22.13+**（推荐 Node.js 24 LTS） |
 | npm | 随 Node 安装 |
 | Git | 用于 clone |
 | 浏览器 | Chrome / Edge 最新版 |
@@ -42,11 +42,9 @@ npm install
 
 ---
 
-## 3. 环境变量（可选）
+## 3. 环境变量
 
-本地 `npm run dev` 时，Vite 会使用 `vite.config.ts` 里的代理密钥连接 OCR / LLM（与云端 demo 相同栈）。
-
-若你有自己的 Key，或 demo 密钥失效，复制并编辑：
+真实 OCR、向量检索与推理通过本地 Vite 代理读取服务端环境变量。复制示例配置：
 
 ```bash
 cp .env.example .env.local
@@ -59,7 +57,7 @@ ZHIPU_API_KEY=你的智谱密钥
 LLM_API_KEY=你的硅基流动密钥
 ```
 
-不填也能先试跑；OCR / 推理失败时再补 Key。
+没有供应商密钥时可以启动页面，并通过 `/api/protocol/infer-ops` 的 Mock 返回检查协议。完成扫描件流程需要配置 OCR 和 LLM 密钥。
 
 ---
 
